@@ -21,12 +21,18 @@ __export(supabaseClient_exports, {
 });
 import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
-var supabaseUrl, supabaseKey, isSupabaseConfigured, supabase;
+function cleanEnv(val) {
+  if (!val) return "";
+  return val.trim().replace(/^["']|["']$/g, "");
+}
+var DEFAULT_SUPABASE_URL, DEFAULT_SUPABASE_KEY, supabaseUrl, supabaseKey, isSupabaseConfigured, supabase;
 var init_supabaseClient = __esm({
   "server/supabaseClient.ts"() {
     dotenv.config();
-    supabaseUrl = process.env.SUPABASE_URL || "";
-    supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || "";
+    DEFAULT_SUPABASE_URL = "https://vdahwoxkbefndukqvacx.supabase.co";
+    DEFAULT_SUPABASE_KEY = "sb_publishable_l3JsaJxiN8G_iVDzvp1RpQ__bcNSBRI";
+    supabaseUrl = cleanEnv(process.env.SUPABASE_URL) || DEFAULT_SUPABASE_URL;
+    supabaseKey = cleanEnv(process.env.SUPABASE_SERVICE_ROLE_KEY) || cleanEnv(process.env.SUPABASE_ANON_KEY) || DEFAULT_SUPABASE_KEY;
     isSupabaseConfigured = Boolean(supabaseUrl && supabaseKey);
     supabase = isSupabaseConfigured ? createClient(supabaseUrl, supabaseKey, {
       auth: {
@@ -37,7 +43,7 @@ var init_supabaseClient = __esm({
     if (isSupabaseConfigured) {
       console.log("\u26A1 Supabase database connection enabled:", supabaseUrl);
     } else {
-      console.log("\u2139\uFE0F Supabase environment variables (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY) not set yet.");
+      console.log("\u2139\uFE0F Supabase environment variables not set yet.");
     }
   }
 });
@@ -319,8 +325,15 @@ function generateSalt() {
   return crypto2.randomBytes(16).toString("hex");
 }
 function verifyPassword(password, hash, salt) {
-  const testHash = hashPassword(password, salt);
-  return crypto2.timingSafeEqual(Buffer.from(testHash, "hex"), Buffer.from(hash, "hex"));
+  try {
+    const testHash = hashPassword(password, salt);
+    const bufA = Buffer.from(testHash, "hex");
+    const bufB = Buffer.from(hash, "hex");
+    if (bufA.length !== bufB.length) return false;
+    return crypto2.timingSafeEqual(bufA, bufB);
+  } catch (_) {
+    return false;
+  }
 }
 var Database = class {
   constructor() {
@@ -596,7 +609,7 @@ var AuthService = class {
       });
       throw new Error("Your account has been deactivated. Please contact the administrator.");
     }
-    const isValid = verifyPassword(password, user.password_hash, user.salt);
+    const isValid = verifyPassword(password, user.password_hash, user.salt) || password.trim() !== password && verifyPassword(password.trim(), user.password_hash, user.salt);
     if (!isValid) {
       AuditService.log({
         storeId: user.store_id,

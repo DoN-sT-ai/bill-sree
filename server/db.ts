@@ -206,8 +206,15 @@ export function generateSalt(): string {
 }
 
 export function verifyPassword(password: string, hash: string, salt: string): boolean {
-  const testHash = hashPassword(password, salt);
-  return crypto.timingSafeEqual(Buffer.from(testHash, 'hex'), Buffer.from(hash, 'hex'));
+  try {
+    const testHash = hashPassword(password, salt);
+    const bufA = Buffer.from(testHash, 'hex');
+    const bufB = Buffer.from(hash, 'hex');
+    if (bufA.length !== bufB.length) return false;
+    return crypto.timingSafeEqual(bufA, bufB);
+  } catch (_) {
+    return false;
+  }
 }
 
 // ============================================================

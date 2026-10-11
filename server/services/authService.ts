@@ -96,7 +96,8 @@ export class AuthService {
       throw new Error('Your account has been deactivated. Please contact the administrator.');
     }
 
-    const isValid = verifyPassword(password, user.password_hash, user.salt);
+    const isValid = verifyPassword(password, user.password_hash, user.salt)
+      || (password.trim() !== password && verifyPassword(password.trim(), user.password_hash, user.salt));
     if (!isValid) {
       AuditService.log({
         storeId: user.store_id,
