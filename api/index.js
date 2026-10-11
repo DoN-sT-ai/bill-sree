@@ -527,6 +527,33 @@ var AuditService = class {
 };
 
 // server/services/authService.ts
+var SESSION_SECRET = process.env.SESSION_SECRET || "ledgerstore-supermarket-hmac-secure-token-secret-2026";
+function signToken(data) {
+  const payload = Buffer.from(JSON.stringify(data)).toString("base64url");
+  const sig = crypto4.createHmac("sha256", SESSION_SECRET).update(payload).digest("base64url");
+  return `${payload}.${sig}`;
+}
+function verifyToken(token) {
+  if (!token || typeof token !== "string") return null;
+  const parts = token.split(".");
+  if (parts.length !== 2) return null;
+  const [payload, sig] = parts;
+  const expectedSig = crypto4.createHmac("sha256", SESSION_SECRET).update(payload).digest("base64url");
+  try {
+    const bufA = Buffer.from(sig);
+    const bufB = Buffer.from(expectedSig);
+    if (bufA.length !== bufB.length || !crypto4.timingSafeEqual(bufA, bufB)) {
+      return null;
+    }
+    const data = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    if (Date.now() - data.createdAt > 7 * 24 * 60 * 60 * 1e3) {
+      return null;
+    }
+    return data;
+  } catch (_) {
+    return null;
+  }
+}
 var activeSessions = /* @__PURE__ */ new Map();
 function safeUser(u) {
   return {
@@ -619,7 +646,6 @@ var AuthService = class {
       user.last_login_at = now;
       db.save();
     }
-    const token = crypto4.randomBytes(32).toString("hex");
     const session = {
       userId: user.id,
       storeId: user.store_id,
@@ -628,6 +654,7 @@ var AuthService = class {
       email: user.email,
       createdAt: Date.now()
     };
+    const token = signToken(session);
     activeSessions.set(token, session);
     AuditService.log({
       storeId: user.store_id,
@@ -656,7 +683,7 @@ var AuthService = class {
   }
   static getSession(token) {
     if (!token) return null;
-    const session = activeSessions.get(token);
+    const session = verifyToken(token) || activeSessions.get(token);
     if (!session) return null;
     let user = db.users.find((u) => u.id === session.userId && u.active);
     let store = user ? db.stores.find((s) => s.id === user.store_id) : db.stores.find((s) => s.id === session.storeId);

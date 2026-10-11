@@ -13,7 +13,39 @@ export interface SessionData {
   createdAt: number;
 }
 
-// In-memory active sessions map: token -> SessionData
+// Secret for signing stateless session tokens across serverless invocations
+const SESSION_SECRET = process.env.SESSION_SECRET || 'ledgerstore-supermarket-hmac-secure-token-secret-2026';
+
+export function signToken(data: SessionData): string {
+  const payload = Buffer.from(JSON.stringify(data)).toString('base64url');
+  const sig = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('base64url');
+  return `${payload}.${sig}`;
+}
+
+export function verifyToken(token: string): SessionData | null {
+  if (!token || typeof token !== 'string') return null;
+  const parts = token.split('.');
+  if (parts.length !== 2) return null;
+  const [payload, sig] = parts;
+  const expectedSig = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('base64url');
+  try {
+    const bufA = Buffer.from(sig);
+    const bufB = Buffer.from(expectedSig);
+    if (bufA.length !== bufB.length || !crypto.timingSafeEqual(bufA, bufB)) {
+      return null;
+    }
+    const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as SessionData;
+    // Expire session after 7 days
+    if (Date.now() - data.createdAt > 7 * 24 * 60 * 60 * 1000) {
+      return null;
+    }
+    return data;
+  } catch (_) {
+    return null;
+  }
+}
+
+// In-memory active sessions map (used as local cache)
 const activeSessions = new Map<string, SessionData>();
 
 export function safeUser(u: User) {
@@ -121,8 +153,7 @@ export class AuthService {
       db.save();
     }
 
-    // Create session token
-    const token = crypto.randomBytes(32).toString('hex');
+    // Create stateless signed session token (serverless compatible)
     const session: SessionData = {
       userId: user.id,
       storeId: user.store_id,
@@ -131,6 +162,7 @@ export class AuthService {
       email: user.email,
       createdAt: Date.now(),
     };
+    const token = signToken(session);
     activeSessions.set(token, session);
 
     AuditService.log({
@@ -165,7 +197,8 @@ export class AuthService {
 
   static getSession(token: string): { user: ReturnType<typeof safeUser>; store: any; session: SessionData } | null {
     if (!token) return null;
-    const session = activeSessions.get(token);
+    // Verify statelessly across serverless Lambda instances, or fall back to in-memory map
+    const session = verifyToken(token) || activeSessions.get(token);
     if (!session) return null;
 
     let user = db.users.find(u => u.id === session.userId && u.active);
