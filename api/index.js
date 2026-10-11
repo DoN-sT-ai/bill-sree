@@ -555,19 +555,23 @@ var AuthService = class {
       user = db.users.find((u) => u.email.toLowerCase() === cleanEmail) ?? null;
     }
     if (!user) {
+      if (!isSupabaseConfigured) {
+        throw new Error("Database not connected: SUPABASE_URL and SUPABASE_ANON_KEY are missing in Vercel Environment Variables. Please add them in Vercel Project Settings > Environment Variables and redeploy.");
+      }
       if (isSupabaseConfigured) {
         try {
           const { supabase: supabase2 } = await Promise.resolve().then(() => (init_supabaseClient(), supabaseClient_exports));
           if (supabase2) {
-            const { count } = await supabase2.from("users").select("*", { count: "exact", head: true });
+            const { count, error } = await supabase2.from("users").select("*", { count: "exact", head: true });
+            if (error) {
+              throw new Error(`Database connection failed: ${error.message}`);
+            }
             if (count === 0) {
               throw new Error("Supabase database is empty: Please run the seed SQL in your Supabase SQL Editor to create the admin user.");
             }
           }
         } catch (err) {
-          if (err.message?.includes("Supabase database is empty")) {
-            throw err;
-          }
+          throw err;
         }
       }
       AuditService.log({

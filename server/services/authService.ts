@@ -51,19 +51,24 @@ export class AuthService {
     }
 
     if (!user) {
+      if (!isSupabaseConfigured) {
+        throw new Error('Database not connected: SUPABASE_URL and SUPABASE_ANON_KEY are missing in Vercel Environment Variables. Please add them in Vercel Project Settings > Environment Variables and redeploy.');
+      }
+
       if (isSupabaseConfigured) {
         try {
           const { supabase } = await import('../supabaseClient.ts');
           if (supabase) {
-            const { count } = await supabase.from('users').select('*', { count: 'exact', head: true });
+            const { count, error } = await supabase.from('users').select('*', { count: 'exact', head: true });
+            if (error) {
+              throw new Error(`Database connection failed: ${error.message}`);
+            }
             if (count === 0) {
               throw new Error('Supabase database is empty: Please run the seed SQL in your Supabase SQL Editor to create the admin user.');
             }
           }
         } catch (err: any) {
-          if (err.message?.includes('Supabase database is empty')) {
-            throw err;
-          }
+          throw err;
         }
       }
 
