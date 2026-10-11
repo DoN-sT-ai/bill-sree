@@ -1935,8 +1935,38 @@ var __filename = fileURLToPath(import.meta.url);
 var __dirname = path.dirname(__filename);
 var app = express();
 var PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3e3;
-app.use(express.json());
+app.use((req, res, next) => {
+  if (typeof req.body === "string") {
+    try {
+      req.body = JSON.parse(req.body);
+    } catch (_) {
+    }
+  }
+  if (req.body && typeof req.body === "object") {
+    return next();
+  }
+  express.json({ limit: "10mb" })(req, res, next);
+});
 app.use(cookieParser());
+app.use((req, _res, next) => {
+  if (req.url && req.url.startsWith("/api/index.js")) {
+    req.url = req.url.replace("/api/index.js", "/api");
+  }
+  if (req.url && !req.url.startsWith("/api") && !req.url.startsWith("/assets") && !req.url.includes(".")) {
+    req.url = "/api" + (req.url.startsWith("/") ? req.url : "/" + req.url);
+  }
+  next();
+});
+app.get("/api/health", (_req, res) => {
+  res.json({
+    status: "ok",
+    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+    isSupabaseConfigured,
+    supabaseConfigured: Boolean(process.env.SUPABASE_URL),
+    nodeEnv: process.env.NODE_ENV,
+    isVercel: Boolean(process.env.VERCEL)
+  });
+});
 var requireAuth = (req, res, next) => {
   const token = req.cookies?.session_token || req.headers["x-session-token"];
   if (!token) {
@@ -2361,6 +2391,15 @@ app.patch("/api/settings", requireAuth, requireAdmin, async (req, res) => {
   } catch (err) {
     res.status(400).json({ error: { message: err.message } });
   }
+});
+app.use((err, _req, res, _next) => {
+  console.error("Unhandled API Error:", err);
+  res.status(err.status || 500).json({
+    error: {
+      code: err.code || "SERVER_ERROR",
+      message: err.message || "Internal Server Error"
+    }
+  });
 });
 async function startServer() {
   const isProd = process.env.NODE_ENV === "production";
