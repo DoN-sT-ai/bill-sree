@@ -1,0 +1,88 @@
+import React from 'react';
+import { useAuth } from '../../context/AuthContext';
+import {
+  LayoutDashboard,
+  ShoppingCart,
+  Boxes,
+  ArrowLeftRight,
+  Receipt,
+  Users,
+  Wallet,
+  FileBarChart2,
+  ScrollText,
+  Settings,
+  ShieldCheck,
+} from 'lucide-react';
+
+interface SidebarProps {
+  currentTab: string;
+  onSelectTab: (tab: string) => void;
+}
+
+export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab }) => {
+  const { user, isAdmin } = useAuth();
+
+  const adminNav = [
+    { id: 'billing', label: 'POS Billing', icon: ShoppingCart, highlight: true },
+    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'inventory', label: 'Inventory & Stock', icon: Boxes },
+    { id: 'movements', label: 'Stock Movements', icon: ArrowLeftRight },
+    { id: 'sales', label: 'Sales & Bills', icon: Receipt },
+    { id: 'expenses', label: 'Expenses', icon: Wallet },
+    { id: 'reports', label: 'Reports & P&L', icon: FileBarChart2 },
+    { id: 'employees', label: 'Employees', icon: Users },
+    { id: 'audit', label: 'Audit Trail', icon: ScrollText },
+    { id: 'settings', label: 'Store Settings', icon: Settings },
+  ];
+
+  const employeeNav = [
+    { id: 'billing', label: 'POS Billing', icon: ShoppingCart, highlight: true },
+    { id: 'inventory', label: 'Inventory Catalog', icon: Boxes },
+    { id: 'movements', label: 'Stock Movements', icon: ArrowLeftRight },
+    { id: 'sales', label: 'My Sales History', icon: Receipt },
+  ];
+
+  const navItems = isAdmin ? adminNav : employeeNav;
+
+  return (
+    <aside className="w-60 border-r border-neutral-200 bg-white flex flex-col shrink-0 select-none">
+      <div className="p-3 border-b border-neutral-100">
+        <div className="text-[11px] font-mono text-neutral-400 uppercase tracking-wider px-2">
+          {isAdmin ? 'ADMIN CONSOLE' : 'CASHIER TERMINAL'}
+        </div>
+      </div>
+
+      <nav className="flex-1 p-2 space-y-0.5 overflow-y-auto">
+        {navItems.map((item) => {
+          const Icon = item.icon;
+          const isActive = currentTab === item.id;
+          return (
+            <button
+              key={item.id}
+              onClick={() => onSelectTab(item.id)}
+              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded text-xs font-medium transition-colors ${
+                isActive
+                  ? 'bg-neutral-900 text-white font-semibold shadow-xs'
+                  : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100'
+              } ${item.highlight && !isActive ? 'text-neutral-900 font-semibold bg-neutral-50 border border-neutral-200' : ''}`}
+            >
+              <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-white' : 'text-neutral-500'}`} />
+              <span className="truncate">{item.label}</span>
+            </button>
+          );
+        })}
+      </nav>
+
+      {/* Subtle store status indicator */}
+      <div className="p-3 border-t border-neutral-200 bg-neutral-50 text-[11px] text-neutral-500">
+        <div className="flex items-center gap-1.5 font-medium text-neutral-700">
+          <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+          <span>Ledger Active</span>
+        </div>
+        <div className="text-neutral-400 mt-0.5 text-[10px]">
+          ACID Transactional Mode
+        </div>
+      </div>
+    </aside>
+  );
+};
