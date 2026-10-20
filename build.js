@@ -1,9 +1,17 @@
-import { execSync } from 'child_process';
+import { build as viteBuild } from 'vite';
+import * as esbuild from 'esbuild';
 
 console.log('Building Vite client bundle...');
-execSync('npx vite build', { stdio: 'inherit' });
+await viteBuild();
 
 console.log('Bundling server API for Vercel/Node...');
-execSync('npx esbuild server/apiApp.ts --bundle --platform=node --format=esm --packages=external --outfile=api/index.js', { stdio: 'inherit' });
+await esbuild.build({
+  entryPoints: ['server/apiApp.ts'],
+  bundle: true,
+  platform: 'node',
+  format: 'esm',
+  packages: 'external',
+  outfile: 'api/index.js'
+});
 
 console.log('Build completed successfully!');
