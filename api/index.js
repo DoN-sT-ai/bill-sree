@@ -48,19 +48,12 @@ var init_supabaseClient = __esm({
   }
 });
 
-// server/apiApp.ts
-import "dotenv/config";
-import express from "express";
-import cookieParser from "cookie-parser";
-import QRCode from "qrcode";
-
-// server/db.ts
-import crypto2 from "crypto";
-
 // server/supabaseDb.ts
-init_supabaseClient();
+var supabaseDb_exports = {};
+__export(supabaseDb_exports, {
+  SupabaseDb: () => SupabaseDb
+});
 import crypto from "crypto";
-var UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function ensureUuid(val) {
   if (val && UUID_REGEX.test(val)) return val;
   return crypto.randomUUID();
@@ -69,249 +62,732 @@ function nullableUuid(val) {
   if (val && UUID_REGEX.test(val)) return val;
   return null;
 }
-var SupabaseDb = class {
-  // STORE
-  static async getStore(storeId) {
-    if (!supabase) return null;
-    const { data, error } = await supabase.from("stores").select("*").eq("id", storeId).single();
-    if (error) {
-      console.error("Supabase getStore error:", error);
-      return null;
-    }
-    return data;
+var UUID_REGEX, SupabaseDb;
+var init_supabaseDb = __esm({
+  "server/supabaseDb.ts"() {
+    init_supabaseClient();
+    UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    SupabaseDb = class {
+      // STORE
+      static async getStore(storeId) {
+        if (!supabase) return null;
+        const { data, error } = await supabase.from("stores").select("*").eq("id", storeId).single();
+        if (error) {
+          console.error("Supabase getStore error:", error);
+          return null;
+        }
+        return data;
+      }
+      static async updateStore(storeId, updates) {
+        if (!supabase) return null;
+        const { data, error } = await supabase.from("stores").update({ ...updates, updated_at: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", storeId).select().single();
+        if (error) {
+          console.error("Supabase updateStore error:", error);
+          throw new Error(error.message);
+        }
+        return data;
+      }
+      // USERS
+      static async getUsers(storeId) {
+        if (!supabase) return [];
+        const { data, error } = await supabase.from("users").select("*").eq("store_id", storeId).order("created_at", { ascending: false });
+        if (error) {
+          console.error("Supabase getUsers error:", error);
+          return [];
+        }
+        return data || [];
+      }
+      static async getUserByEmail(email) {
+        if (!supabase) return null;
+        const { data, error } = await supabase.from("users").select("*").ilike("email", email.trim()).maybeSingle();
+        if (error) {
+          console.error("Supabase getUserByEmail error:", error);
+          return null;
+        }
+        return data;
+      }
+      static async createUser(user) {
+        if (!supabase) throw new Error("Supabase client not initialized");
+        const { data, error } = await supabase.from("users").insert({
+          ...user,
+          id: ensureUuid(user.id),
+          created_by: nullableUuid(user.created_by),
+          created_at: (/* @__PURE__ */ new Date()).toISOString(),
+          updated_at: (/* @__PURE__ */ new Date()).toISOString()
+        }).select().single();
+        if (error) {
+          console.error("Supabase createUser error:", error);
+          throw new Error(error.message);
+        }
+        return data;
+      }
+      static async updateUser(userId, updates) {
+        if (!supabase) throw new Error("Supabase client not initialized");
+        const { data, error } = await supabase.from("users").update({ ...updates, updated_at: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", userId).select().single();
+        if (error) {
+          console.error("Supabase updateUser error:", error);
+          throw new Error(error.message);
+        }
+        return data;
+      }
+      static async deleteUser(userId) {
+        if (!supabase) throw new Error("Supabase client not initialized");
+        const { error } = await supabase.from("users").delete().eq("id", userId);
+        if (error) {
+          console.error("Supabase deleteUser error:", error);
+          throw new Error(error.message);
+        }
+        return true;
+      }
+      // CATEGORIES
+      static async getCategories(storeId) {
+        if (!supabase) return [];
+        const { data, error } = await supabase.from("categories").select("*").eq("store_id", storeId).order("name", { ascending: true });
+        if (error) {
+          console.error("Supabase getCategories error:", error);
+          return [];
+        }
+        return data || [];
+      }
+      static async createCategory(category) {
+        if (!supabase) throw new Error("Supabase client not initialized");
+        const { data, error } = await supabase.from("categories").insert({
+          ...category,
+          id: ensureUuid(category.id),
+          created_at: (/* @__PURE__ */ new Date()).toISOString(),
+          updated_at: (/* @__PURE__ */ new Date()).toISOString()
+        }).select().single();
+        if (error) throw new Error(error.message);
+        return data;
+      }
+      static async deleteCategory(storeId, categoryId) {
+        if (!supabase) return false;
+        const { error: updateErr } = await supabase.from("products").update({ category_id: null, updated_at: (/* @__PURE__ */ new Date()).toISOString() }).eq("store_id", storeId).eq("category_id", categoryId);
+        if (updateErr) {
+          console.warn("Supabase detach category from products warning:", updateErr.message);
+        }
+        const { error } = await supabase.from("categories").delete().eq("store_id", storeId).eq("id", categoryId);
+        if (error) {
+          console.error("Supabase deleteCategory error:", error);
+          throw new Error(error.message);
+        }
+        return true;
+      }
+      static async seedDefaultCategories(storeId, defaults) {
+        if (!supabase) return [];
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const rows = defaults.map((d) => ({
+          id: crypto.randomUUID(),
+          store_id: storeId,
+          name: d.name,
+          description: d.description || "",
+          active: true,
+          created_at: now,
+          updated_at: now
+        }));
+        const { data, error } = await supabase.from("categories").insert(rows).select();
+        if (error) {
+          console.error("Supabase seedDefaultCategories error:", error);
+          return [];
+        }
+        return data || [];
+      }
+      // PRODUCTS
+      static async getProducts(storeId) {
+        if (!supabase) return [];
+        const { data, error } = await supabase.from("products").select("*").eq("store_id", storeId).order("name", { ascending: true });
+        if (error) {
+          console.error("Supabase getProducts error:", error);
+          return [];
+        }
+        return data || [];
+      }
+      static async createProduct(product) {
+        if (!supabase) throw new Error("Supabase client not initialized");
+        const { data, error } = await supabase.from("products").insert({
+          ...product,
+          id: ensureUuid(product.id),
+          category_id: nullableUuid(product.category_id),
+          created_at: (/* @__PURE__ */ new Date()).toISOString(),
+          updated_at: (/* @__PURE__ */ new Date()).toISOString()
+        }).select().single();
+        if (error) throw new Error(error.message);
+        return data;
+      }
+      static async updateProduct(productId, updates) {
+        if (!supabase) throw new Error("Supabase client not initialized");
+        const cleanUpdates = { ...updates, updated_at: (/* @__PURE__ */ new Date()).toISOString() };
+        if ("category_id" in cleanUpdates) {
+          cleanUpdates.category_id = nullableUuid(cleanUpdates.category_id);
+        }
+        const { data, error } = await supabase.from("products").update(cleanUpdates).eq("id", productId).select().single();
+        if (error) throw new Error(error.message);
+        return data;
+      }
+      static async deleteProduct(productId) {
+        if (!supabase) throw new Error("Supabase client not initialized");
+        const { error } = await supabase.from("products").delete().eq("id", productId);
+        if (error) {
+          console.error("Supabase deleteProduct error:", error);
+          throw new Error(error.message);
+        }
+        return true;
+      }
+      // STOCK MOVEMENTS
+      static async getStockMovements(storeId, limit = 150) {
+        if (!supabase) return [];
+        const { data, error } = await supabase.from("stock_movements").select("*").eq("store_id", storeId).order("created_at", { ascending: false }).limit(limit);
+        if (error) {
+          console.error("Supabase getStockMovements error:", error);
+          return [];
+        }
+        return data || [];
+      }
+      static async createStockMovement(movement) {
+        if (!supabase) throw new Error("Supabase client not initialized");
+        const { data, error } = await supabase.from("stock_movements").insert({
+          ...movement,
+          id: ensureUuid(movement.id),
+          user_id: nullableUuid(movement.user_id),
+          reference_id: nullableUuid(movement.reference_id),
+          created_at: (/* @__PURE__ */ new Date()).toISOString()
+        }).select().single();
+        if (error) throw new Error(error.message);
+        return data;
+      }
+      static async createStockMovementsBatch(movements) {
+        if (!supabase || movements.length === 0) return;
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const rows = movements.map((m) => ({
+          ...m,
+          id: crypto.randomUUID(),
+          user_id: nullableUuid(m.user_id),
+          reference_id: nullableUuid(m.reference_id),
+          created_at: now
+        }));
+        const { error } = await supabase.from("stock_movements").insert(rows);
+        if (error) console.error("Supabase createStockMovementsBatch error:", error);
+      }
+      // SALES
+      static async getSales(storeId, limit = 200) {
+        if (!supabase) return [];
+        const { data, error } = await supabase.from("sales").select("*, items:sale_items(*)").eq("store_id", storeId).order("created_at", { ascending: false }).limit(limit);
+        if (error) {
+          console.error("Supabase getSales error:", error);
+          return [];
+        }
+        return data || [];
+      }
+      static async getSaleByVerificationToken(token) {
+        if (!supabase) return null;
+        const { data, error } = await supabase.from("sales").select("*, items:sale_items(*)").eq("verification_token", token.trim()).maybeSingle();
+        if (error) {
+          console.error("Supabase getSaleByVerificationToken error:", error);
+          return null;
+        }
+        return data;
+      }
+      static async createSale(sale, items) {
+        if (!supabase) throw new Error("Supabase client not initialized");
+        const { data: saleData, error: saleErr } = await supabase.from("sales").insert({
+          ...sale,
+          id: ensureUuid(sale.id),
+          employee_id: nullableUuid(sale.employee_id),
+          voided_by: nullableUuid(sale.voided_by),
+          created_at: (/* @__PURE__ */ new Date()).toISOString()
+        }).select().single();
+        if (saleErr) throw new Error(saleErr.message);
+        const preparedItems = items.map((item) => ({
+          ...item,
+          id: ensureUuid(item.id),
+          sale_id: saleData.id,
+          product_id: nullableUuid(item.product_id),
+          created_at: (/* @__PURE__ */ new Date()).toISOString()
+        }));
+        const { data: itemsData, error: itemsErr } = await supabase.from("sale_items").insert(preparedItems).select();
+        if (itemsErr) throw new Error(itemsErr.message);
+        return { ...saleData, items: itemsData };
+      }
+      static async voidSale(saleId, voidedBy, voidedByName, reason) {
+        if (!supabase) throw new Error("Supabase client not initialized");
+        const { data, error } = await supabase.from("sales").update({
+          status: "VOIDED",
+          voided_at: (/* @__PURE__ */ new Date()).toISOString(),
+          voided_by: voidedBy,
+          voided_by_name: voidedByName,
+          void_reason: reason
+        }).eq("id", saleId).select("*, items:sale_items(*)").single();
+        if (error) throw new Error(error.message);
+        return data;
+      }
+      // EXPENSES
+      static async getExpenses(storeId) {
+        if (!supabase) return [];
+        const { data, error } = await supabase.from("expenses").select("*").eq("store_id", storeId).order("created_at", { ascending: false });
+        if (error) {
+          console.error("Supabase getExpenses error:", error);
+          return [];
+        }
+        return data || [];
+      }
+      static async createExpense(expense) {
+        if (!supabase) throw new Error("Supabase client not initialized");
+        const { data, error } = await supabase.from("expenses").insert({
+          ...expense,
+          id: ensureUuid(expense.id),
+          created_by: nullableUuid(expense.created_by),
+          created_at: (/* @__PURE__ */ new Date()).toISOString()
+        }).select().single();
+        if (error) throw new Error(error.message);
+        return data;
+      }
+      static async voidExpense(expenseId) {
+        if (!supabase) throw new Error("Supabase client not initialized");
+        const { data, error } = await supabase.from("expenses").update({ status: "VOIDED" }).eq("id", expenseId).select().single();
+        if (error) throw new Error(error.message);
+        return data;
+      }
+      // AUDIT LOGS
+      static async getAuditLogs(storeId, limit = 300) {
+        if (!supabase) return [];
+        const { data, error } = await supabase.from("audit_logs").select("*").eq("store_id", storeId).order("created_at", { ascending: false }).limit(limit);
+        if (error) {
+          console.error("Supabase getAuditLogs error:", error);
+          return [];
+        }
+        return data || [];
+      }
+      static async createAuditLog(log) {
+        if (!supabase) throw new Error("Supabase client not initialized");
+        const { data, error } = await supabase.from("audit_logs").insert({
+          ...log,
+          created_at: (/* @__PURE__ */ new Date()).toISOString()
+        }).select().single();
+        if (error) {
+          console.error("Supabase createAuditLog error:", error);
+        }
+        return data;
+      }
+    };
   }
-  static async updateStore(storeId, updates) {
-    if (!supabase) return null;
-    const { data, error } = await supabase.from("stores").update({ ...updates, updated_at: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", storeId).select().single();
-    if (error) {
-      console.error("Supabase updateStore error:", error);
-      throw new Error(error.message);
-    }
-    return data;
+});
+
+// server/services/auditService.ts
+import crypto2 from "crypto";
+var AuditService;
+var init_auditService = __esm({
+  "server/services/auditService.ts"() {
+    init_db();
+    AuditService = class {
+      static log(params) {
+        const entry = {
+          id: crypto2.randomUUID(),
+          store_id: params.storeId,
+          user_id: params.userId,
+          user_name: params.userName,
+          action: params.action,
+          entity_type: params.entityType,
+          entity_id: params.entityId,
+          before_data: params.beforeData,
+          after_data: params.afterData,
+          ip_address: params.ipAddress,
+          user_agent: params.userAgent,
+          created_at: (/* @__PURE__ */ new Date()).toISOString()
+        };
+        db.audit_logs.unshift(entry);
+        if (db.audit_logs.length > 5e3) {
+          db.audit_logs.pop();
+        }
+        db.save();
+        return entry;
+      }
+      static getLogs(storeId, filter) {
+        let logs = db.audit_logs.filter((l) => l.store_id === storeId);
+        if (filter?.action) {
+          logs = logs.filter((l) => l.action.toLowerCase().includes(filter.action.toLowerCase()));
+        }
+        if (filter?.entityType) {
+          logs = logs.filter((l) => l.entity_type.toLowerCase() === filter.entityType.toLowerCase());
+        }
+        const limit = filter?.limit || 100;
+        return logs.slice(0, limit);
+      }
+    };
   }
-  // USERS
-  static async getUsers(storeId) {
-    if (!supabase) return [];
-    const { data, error } = await supabase.from("users").select("*").eq("store_id", storeId).order("created_at", { ascending: false });
-    if (error) {
-      console.error("Supabase getUsers error:", error);
-      return [];
-    }
-    return data || [];
+});
+
+// server/services/productService.ts
+var productService_exports = {};
+__export(productService_exports, {
+  CategoryService: () => CategoryService,
+  DEFAULT_STORE_CATEGORIES: () => DEFAULT_STORE_CATEGORIES,
+  ProductService: () => ProductService
+});
+import crypto3 from "crypto";
+var ProductService, DEFAULT_STORE_CATEGORIES, CategoryService;
+var init_productService = __esm({
+  "server/services/productService.ts"() {
+    init_db();
+    init_auditService();
+    init_supabaseDb();
+    init_supabaseClient();
+    ProductService = class {
+      static listProducts(storeId, options) {
+        let list = db.products.filter((p) => p.store_id === storeId);
+        if (options?.activeOnly !== false) {
+          list = list.filter((p) => p.active);
+        }
+        if (options?.barcode) {
+          const b = options.barcode.trim();
+          list = list.filter((p) => p.barcode === b);
+          return list;
+        }
+        if (options?.search) {
+          const q = options.search.trim().toLowerCase();
+          list = list.filter(
+            (p) => p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q) || p.barcode.toLowerCase().includes(q) || p.description && p.description.toLowerCase().includes(q)
+          );
+        }
+        if (options?.categoryId) {
+          list = list.filter((p) => p.category_id === options.categoryId);
+        }
+        if (options?.lowStock) {
+          list = list.filter((p) => p.current_stock <= p.minimum_stock && p.current_stock > 0);
+        }
+        if (options?.outOfStock) {
+          list = list.filter((p) => p.current_stock <= 0);
+        }
+        return list;
+      }
+      static getProduct(storeId, productId) {
+        const prod = db.products.find((p) => p.id === productId && p.store_id === storeId);
+        if (!prod) throw new Error("Product not found");
+        return prod;
+      }
+      static async createProduct(storeId, userId, userName, payload) {
+        const cleanSku = payload.sku.trim();
+        const cleanBarcode = payload.barcode.trim();
+        if (cleanSku && db.products.some((p) => p.store_id === storeId && p.sku.toLowerCase() === cleanSku.toLowerCase())) {
+          throw new Error(`SKU "${cleanSku}" is already in use by another product`);
+        }
+        if (cleanBarcode && db.products.some((p) => p.store_id === storeId && p.barcode.toLowerCase() === cleanBarcode.toLowerCase())) {
+          throw new Error(`Barcode "${cleanBarcode}" is already in use by another product`);
+        }
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const newProduct = {
+          id: crypto3.randomUUID(),
+          store_id: storeId,
+          category_id: payload.categoryId && payload.categoryId.trim() ? payload.categoryId.trim() : void 0,
+          name: payload.name.trim(),
+          sku: cleanSku,
+          barcode: cleanBarcode,
+          hsn_code: payload.hsnCode?.trim() || "",
+          description: payload.description || "",
+          purchase_price: Math.max(0, Number(payload.purchasePrice) || 0),
+          purchase_tax_type: payload.purchaseTaxType || "EXCLUSIVE",
+          selling_price: Math.max(0, Number(payload.sellingPrice) || 0),
+          tax_rate: Math.max(0, Number(payload.taxRate) || 0),
+          tax_type: payload.taxType || "EXCLUSIVE",
+          current_stock: Math.max(0, Number(payload.currentStock) || 0),
+          minimum_stock: Math.max(0, Number(payload.minimumStock) || 0),
+          unit: payload.unit || "piece",
+          active: true,
+          created_at: now,
+          updated_at: now
+        };
+        if (isSupabaseConfigured) {
+          const saved = await SupabaseDb.createProduct(newProduct);
+          db.products.push(saved);
+          if (saved.current_stock > 0) {
+            const movement = {
+              store_id: storeId,
+              product_id: saved.id,
+              product_name: saved.name,
+              user_id: userId,
+              user_name: userName,
+              type: "INITIAL_STOCK",
+              quantity: saved.current_stock,
+              before_stock: 0,
+              after_stock: saved.current_stock,
+              reason: "Initial stock on product creation"
+            };
+            const savedMov = await SupabaseDb.createStockMovement(movement);
+            db.stock_movements.unshift(savedMov);
+          }
+          AuditService.log({
+            storeId,
+            userId,
+            userName,
+            action: "PRODUCT_CREATED",
+            entityType: "PRODUCT",
+            entityId: saved.id,
+            afterData: { name: saved.name, sku: saved.sku, sellingPrice: saved.selling_price }
+          });
+          return saved;
+        }
+        db.products.push(newProduct);
+        if (newProduct.current_stock > 0) {
+          db.stock_movements.unshift({
+            id: crypto3.randomUUID(),
+            store_id: storeId,
+            product_id: newProduct.id,
+            product_name: newProduct.name,
+            user_id: userId,
+            user_name: userName,
+            type: "INITIAL_STOCK",
+            quantity: newProduct.current_stock,
+            before_stock: 0,
+            after_stock: newProduct.current_stock,
+            reason: "Initial stock on product creation",
+            created_at: now
+          });
+        }
+        AuditService.log({
+          storeId,
+          userId,
+          userName,
+          action: "PRODUCT_CREATED",
+          entityType: "PRODUCT",
+          entityId: newProduct.id,
+          afterData: { name: newProduct.name, sku: newProduct.sku, sellingPrice: newProduct.selling_price }
+        });
+        return newProduct;
+      }
+      static async updateProduct(storeId, userId, userName, productId, payload) {
+        const product = this.getProduct(storeId, productId);
+        const beforeData = { ...product };
+        if (payload.sku && payload.sku !== product.sku) {
+          const exists = db.products.some((p) => p.store_id === storeId && p.id !== productId && p.sku.toLowerCase() === payload.sku.toLowerCase());
+          if (exists) throw new Error(`SKU "${payload.sku}" already exists`);
+          product.sku = payload.sku;
+        }
+        if (payload.barcode && payload.barcode !== product.barcode) {
+          const exists = db.products.some((p) => p.store_id === storeId && p.id !== productId && p.barcode.toLowerCase() === payload.barcode.toLowerCase());
+          if (exists) throw new Error(`Barcode "${payload.barcode}" already exists`);
+          product.barcode = payload.barcode;
+        }
+        if (payload.hsnCode !== void 0) product.hsn_code = payload.hsnCode.trim();
+        if (payload.name !== void 0) product.name = payload.name.trim();
+        if (payload.categoryId !== void 0) product.category_id = payload.categoryId;
+        if (payload.description !== void 0) product.description = payload.description;
+        if (payload.purchasePrice !== void 0) product.purchase_price = Math.max(0, Number(payload.purchasePrice));
+        if (payload.purchaseTaxType !== void 0) product.purchase_tax_type = payload.purchaseTaxType;
+        if (payload.sellingPrice !== void 0) product.selling_price = Math.max(0, Number(payload.sellingPrice));
+        if (payload.taxRate !== void 0) product.tax_rate = Math.max(0, Number(payload.taxRate));
+        if (payload.taxType !== void 0) product.tax_type = payload.taxType;
+        if (payload.minimumStock !== void 0) product.minimum_stock = Math.max(0, Number(payload.minimumStock));
+        if (payload.unit !== void 0) product.unit = payload.unit;
+        if (payload.active !== void 0) product.active = payload.active;
+        product.updated_at = (/* @__PURE__ */ new Date()).toISOString();
+        if (isSupabaseConfigured) {
+          await SupabaseDb.updateProduct(productId, product);
+        }
+        AuditService.log({
+          storeId,
+          userId,
+          userName,
+          action: "PRODUCT_UPDATED",
+          entityType: "PRODUCT",
+          entityId: product.id,
+          beforeData,
+          afterData: { ...product }
+        });
+        return product;
+      }
+      static async toggleActive(storeId, userId, userName, productId, active) {
+        const product = this.getProduct(storeId, productId);
+        const before = product.active;
+        product.active = active;
+        product.updated_at = (/* @__PURE__ */ new Date()).toISOString();
+        if (isSupabaseConfigured) {
+          await SupabaseDb.updateProduct(productId, { active, updated_at: product.updated_at });
+        }
+        AuditService.log({
+          storeId,
+          userId,
+          userName,
+          action: active ? "PRODUCT_ACTIVATED" : "PRODUCT_DEACTIVATED",
+          entityType: "PRODUCT",
+          entityId: product.id,
+          beforeData: { active: before },
+          afterData: { active }
+        });
+        return product;
+      }
+      static async deleteProduct(storeId, userId, userName, productId) {
+        const product = this.getProduct(storeId, productId);
+        if (isSupabaseConfigured) {
+          await SupabaseDb.deleteProduct(productId);
+        }
+        const idx = db.products.findIndex((p) => p.id === productId && p.store_id === storeId);
+        if (idx !== -1) {
+          db.products.splice(idx, 1);
+        }
+        AuditService.log({
+          storeId,
+          userId,
+          userName,
+          action: "PRODUCT_DELETED",
+          entityType: "PRODUCT",
+          entityId: productId,
+          beforeData: { name: product.name, sku: product.sku, barcode: product.barcode }
+        });
+        return { success: true, message: `Product "${product.name}" deleted` };
+      }
+    };
+    DEFAULT_STORE_CATEGORIES = [
+      { name: "Groceries & Staples", description: "Rice, dal, flour, cooking oils, spices, and grains" },
+      { name: "Snacks & Packaged Food", description: "Biscuits, chips, noodles, namkeen, and sweets" },
+      { name: "Beverages & Drinks", description: "Tea, coffee, soft drinks, juices, and mineral water" },
+      { name: "Dairy & Bakery", description: "Milk, curd, butter, paneer, and fresh bread" },
+      { name: "Personal Care & Hygiene", description: "Soaps, shampoos, toothpaste, and hygiene products" },
+      { name: "Household & Cleaning", description: "Detergents, floor cleaners, dishwash, and cleaning supplies" },
+      { name: "Stationery & General", description: "Notebooks, pens, batteries, and general utility items" }
+    ];
+    CategoryService = class _CategoryService {
+      static async listCategories(storeId) {
+        let cats = db.categories.filter((c) => c.store_id === storeId && c.active);
+        if (cats.length === 0) {
+          cats = await _CategoryService.seedDefaultCategories(storeId);
+        }
+        return cats;
+      }
+      static async seedDefaultCategories(storeId, userId, userName) {
+        const existingNames = new Set(
+          db.categories.filter((c) => c.store_id === storeId).map((c) => c.name.toLowerCase().trim())
+        );
+        const toAdd = DEFAULT_STORE_CATEGORIES.filter((d) => !existingNames.has(d.name.toLowerCase().trim()));
+        if (toAdd.length === 0) {
+          return db.categories.filter((c) => c.store_id === storeId && c.active);
+        }
+        if (isSupabaseConfigured) {
+          const saved = await SupabaseDb.seedDefaultCategories(storeId, toAdd);
+          if (saved && saved.length > 0) {
+            db.categories.push(...saved);
+            if (userId && userName) {
+              AuditService.log({
+                storeId,
+                userId,
+                userName,
+                action: "CATEGORIES_SEEDED",
+                entityType: "CATEGORY",
+                afterData: { count: saved.length }
+              });
+            }
+            return db.categories.filter((c) => c.store_id === storeId && c.active);
+          }
+        }
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const created = toAdd.map((d) => ({
+          id: crypto3.randomUUID(),
+          store_id: storeId,
+          name: d.name,
+          description: d.description,
+          active: true,
+          created_at: now,
+          updated_at: now
+        }));
+        db.categories.push(...created);
+        if (userId && userName) {
+          AuditService.log({
+            storeId,
+            userId,
+            userName,
+            action: "CATEGORIES_SEEDED",
+            entityType: "CATEGORY",
+            afterData: { count: created.length }
+          });
+        }
+        return db.categories.filter((c) => c.store_id === storeId && c.active);
+      }
+      static async createCategory(storeId, userId, userName, name, description) {
+        const clean = name.trim();
+        if (db.categories.some((c) => c.store_id === storeId && c.name.toLowerCase() === clean.toLowerCase())) {
+          throw new Error(`Category "${clean}" already exists`);
+        }
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const catPayload = {
+          store_id: storeId,
+          name: clean,
+          description: description || "",
+          active: true
+        };
+        if (isSupabaseConfigured) {
+          const saved = await SupabaseDb.createCategory(catPayload);
+          db.categories.push(saved);
+          AuditService.log({
+            storeId,
+            userId,
+            userName,
+            action: "CATEGORY_CREATED",
+            entityType: "CATEGORY",
+            entityId: saved.id,
+            afterData: { name: saved.name }
+          });
+          return saved;
+        }
+        const cat = {
+          id: crypto3.randomUUID(),
+          ...catPayload,
+          created_at: now,
+          updated_at: now
+        };
+        db.categories.push(cat);
+        AuditService.log({
+          storeId,
+          userId,
+          userName,
+          action: "CATEGORY_CREATED",
+          entityType: "CATEGORY",
+          entityId: cat.id,
+          afterData: { name: cat.name }
+        });
+        return cat;
+      }
+      static async deleteCategory(storeId, userId, userName, categoryId) {
+        const catIndex = db.categories.findIndex((c) => c.store_id === storeId && c.id === categoryId);
+        if (catIndex === -1) {
+          throw new Error("Category not found");
+        }
+        const cat = db.categories[catIndex];
+        let affectedProductsCount = 0;
+        db.products.forEach((p) => {
+          if (p.store_id === storeId && p.category_id === categoryId) {
+            p.category_id = void 0;
+            p.updated_at = (/* @__PURE__ */ new Date()).toISOString();
+            affectedProductsCount++;
+          }
+        });
+        if (isSupabaseConfigured) {
+          await SupabaseDb.deleteCategory(storeId, categoryId);
+        }
+        db.categories.splice(catIndex, 1);
+        AuditService.log({
+          storeId,
+          userId,
+          userName,
+          action: "CATEGORY_DELETED",
+          entityType: "CATEGORY",
+          entityId: categoryId,
+          beforeData: { name: cat.name, description: cat.description, affectedProductsCount }
+        });
+        return {
+          success: true,
+          message: `Category "${cat.name}" removed successfully`,
+          affectedProductsCount
+        };
+      }
+    };
   }
-  static async getUserByEmail(email) {
-    if (!supabase) return null;
-    const { data, error } = await supabase.from("users").select("*").ilike("email", email.trim()).maybeSingle();
-    if (error) {
-      console.error("Supabase getUserByEmail error:", error);
-      return null;
-    }
-    return data;
-  }
-  static async createUser(user) {
-    if (!supabase) throw new Error("Supabase client not initialized");
-    const { data, error } = await supabase.from("users").insert({
-      ...user,
-      id: ensureUuid(user.id),
-      created_by: nullableUuid(user.created_by),
-      created_at: (/* @__PURE__ */ new Date()).toISOString(),
-      updated_at: (/* @__PURE__ */ new Date()).toISOString()
-    }).select().single();
-    if (error) {
-      console.error("Supabase createUser error:", error);
-      throw new Error(error.message);
-    }
-    return data;
-  }
-  static async updateUser(userId, updates) {
-    if (!supabase) throw new Error("Supabase client not initialized");
-    const { data, error } = await supabase.from("users").update({ ...updates, updated_at: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", userId).select().single();
-    if (error) {
-      console.error("Supabase updateUser error:", error);
-      throw new Error(error.message);
-    }
-    return data;
-  }
-  // CATEGORIES
-  static async getCategories(storeId) {
-    if (!supabase) return [];
-    const { data, error } = await supabase.from("categories").select("*").eq("store_id", storeId).order("name", { ascending: true });
-    if (error) {
-      console.error("Supabase getCategories error:", error);
-      return [];
-    }
-    return data || [];
-  }
-  static async createCategory(category) {
-    if (!supabase) throw new Error("Supabase client not initialized");
-    const { data, error } = await supabase.from("categories").insert({
-      ...category,
-      id: ensureUuid(category.id),
-      created_at: (/* @__PURE__ */ new Date()).toISOString(),
-      updated_at: (/* @__PURE__ */ new Date()).toISOString()
-    }).select().single();
-    if (error) throw new Error(error.message);
-    return data;
-  }
-  // PRODUCTS
-  static async getProducts(storeId) {
-    if (!supabase) return [];
-    const { data, error } = await supabase.from("products").select("*").eq("store_id", storeId).order("name", { ascending: true });
-    if (error) {
-      console.error("Supabase getProducts error:", error);
-      return [];
-    }
-    return data || [];
-  }
-  static async createProduct(product) {
-    if (!supabase) throw new Error("Supabase client not initialized");
-    const { data, error } = await supabase.from("products").insert({
-      ...product,
-      id: ensureUuid(product.id),
-      category_id: nullableUuid(product.category_id),
-      created_at: (/* @__PURE__ */ new Date()).toISOString(),
-      updated_at: (/* @__PURE__ */ new Date()).toISOString()
-    }).select().single();
-    if (error) throw new Error(error.message);
-    return data;
-  }
-  static async updateProduct(productId, updates) {
-    if (!supabase) throw new Error("Supabase client not initialized");
-    const { data, error } = await supabase.from("products").update({ ...updates, updated_at: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", productId).select().single();
-    if (error) throw new Error(error.message);
-    return data;
-  }
-  // STOCK MOVEMENTS
-  static async getStockMovements(storeId, limit = 150) {
-    if (!supabase) return [];
-    const { data, error } = await supabase.from("stock_movements").select("*").eq("store_id", storeId).order("created_at", { ascending: false }).limit(limit);
-    if (error) {
-      console.error("Supabase getStockMovements error:", error);
-      return [];
-    }
-    return data || [];
-  }
-  static async createStockMovement(movement) {
-    if (!supabase) throw new Error("Supabase client not initialized");
-    const { data, error } = await supabase.from("stock_movements").insert({
-      ...movement,
-      id: ensureUuid(movement.id),
-      user_id: nullableUuid(movement.user_id),
-      reference_id: nullableUuid(movement.reference_id),
-      created_at: (/* @__PURE__ */ new Date()).toISOString()
-    }).select().single();
-    if (error) throw new Error(error.message);
-    return data;
-  }
-  // SALES
-  static async getSales(storeId, limit = 200) {
-    if (!supabase) return [];
-    const { data, error } = await supabase.from("sales").select("*, items:sale_items(*)").eq("store_id", storeId).order("created_at", { ascending: false }).limit(limit);
-    if (error) {
-      console.error("Supabase getSales error:", error);
-      return [];
-    }
-    return data || [];
-  }
-  static async getSaleByVerificationToken(token) {
-    if (!supabase) return null;
-    const { data, error } = await supabase.from("sales").select("*, items:sale_items(*)").eq("verification_token", token.trim()).maybeSingle();
-    if (error) {
-      console.error("Supabase getSaleByVerificationToken error:", error);
-      return null;
-    }
-    return data;
-  }
-  static async createSale(sale, items) {
-    if (!supabase) throw new Error("Supabase client not initialized");
-    const { data: saleData, error: saleErr } = await supabase.from("sales").insert({
-      ...sale,
-      id: ensureUuid(sale.id),
-      employee_id: nullableUuid(sale.employee_id),
-      voided_by: nullableUuid(sale.voided_by),
-      created_at: (/* @__PURE__ */ new Date()).toISOString()
-    }).select().single();
-    if (saleErr) throw new Error(saleErr.message);
-    const preparedItems = items.map((item) => ({
-      ...item,
-      id: ensureUuid(item.id),
-      sale_id: saleData.id,
-      product_id: nullableUuid(item.product_id),
-      created_at: (/* @__PURE__ */ new Date()).toISOString()
-    }));
-    const { data: itemsData, error: itemsErr } = await supabase.from("sale_items").insert(preparedItems).select();
-    if (itemsErr) throw new Error(itemsErr.message);
-    return { ...saleData, items: itemsData };
-  }
-  static async voidSale(saleId, voidedBy, voidedByName, reason) {
-    if (!supabase) throw new Error("Supabase client not initialized");
-    const { data, error } = await supabase.from("sales").update({
-      status: "VOIDED",
-      voided_at: (/* @__PURE__ */ new Date()).toISOString(),
-      voided_by: voidedBy,
-      voided_by_name: voidedByName,
-      void_reason: reason
-    }).eq("id", saleId).select("*, items:sale_items(*)").single();
-    if (error) throw new Error(error.message);
-    return data;
-  }
-  // EXPENSES
-  static async getExpenses(storeId) {
-    if (!supabase) return [];
-    const { data, error } = await supabase.from("expenses").select("*").eq("store_id", storeId).order("created_at", { ascending: false });
-    if (error) {
-      console.error("Supabase getExpenses error:", error);
-      return [];
-    }
-    return data || [];
-  }
-  static async createExpense(expense) {
-    if (!supabase) throw new Error("Supabase client not initialized");
-    const { data, error } = await supabase.from("expenses").insert({
-      ...expense,
-      id: ensureUuid(expense.id),
-      created_by: nullableUuid(expense.created_by),
-      created_at: (/* @__PURE__ */ new Date()).toISOString()
-    }).select().single();
-    if (error) throw new Error(error.message);
-    return data;
-  }
-  static async voidExpense(expenseId) {
-    if (!supabase) throw new Error("Supabase client not initialized");
-    const { data, error } = await supabase.from("expenses").update({ status: "VOIDED" }).eq("id", expenseId).select().single();
-    if (error) throw new Error(error.message);
-    return data;
-  }
-  // AUDIT LOGS
-  static async getAuditLogs(storeId, limit = 300) {
-    if (!supabase) return [];
-    const { data, error } = await supabase.from("audit_logs").select("*").eq("store_id", storeId).order("created_at", { ascending: false }).limit(limit);
-    if (error) {
-      console.error("Supabase getAuditLogs error:", error);
-      return [];
-    }
-    return data || [];
-  }
-  static async createAuditLog(log) {
-    if (!supabase) throw new Error("Supabase client not initialized");
-    const { data, error } = await supabase.from("audit_logs").insert({
-      ...log,
-      created_at: (/* @__PURE__ */ new Date()).toISOString()
-    }).select().single();
-    if (error) {
-      console.error("Supabase createAuditLog error:", error);
-    }
-    return data;
-  }
-};
+});
 
 // server/db.ts
-init_supabaseClient();
+import crypto4 from "crypto";
 function hashPassword(password, salt) {
-  return crypto2.scryptSync(password, salt, 64).toString("hex");
+  return crypto4.scryptSync(password, salt, 64).toString("hex");
 }
 function generateSalt() {
-  return crypto2.randomBytes(16).toString("hex");
+  return crypto4.randomBytes(16).toString("hex");
 }
 function verifyPassword(password, hash, salt) {
   try {
@@ -319,218 +795,237 @@ function verifyPassword(password, hash, salt) {
     const bufA = Buffer.from(testHash, "hex");
     const bufB = Buffer.from(hash, "hex");
     if (bufA.length !== bufB.length) return false;
-    return crypto2.timingSafeEqual(bufA, bufB);
+    return crypto4.timingSafeEqual(bufA, bufB);
   } catch (_) {
     return false;
   }
 }
-var Database = class {
-  constructor() {
-    this.cache = {
-      stores: [],
-      users: [],
-      categories: [],
-      products: [],
-      stock_movements: [],
-      sales: [],
-      sale_items: [],
-      expenses: [],
-      audit_logs: [],
-      bill_sequences: []
-    };
-    this.initialized = false;
-    this.initPromise = null;
-    this.initPromise = this.init();
-  }
-  waitForInit() {
-    return this.initPromise ?? Promise.resolve();
-  }
-  async init() {
-    if (!isSupabaseConfigured) {
-      console.warn("\u26A0\uFE0F  SUPABASE NOT CONFIGURED \u2014 set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env");
-      this.initialized = true;
-      return;
-    }
-    await this.syncFromSupabase();
-    this.initialized = true;
-  }
-  async syncFromSupabase() {
-    if (!isSupabaseConfigured) return;
-    try {
-      const { supabase: supabase2 } = await Promise.resolve().then(() => (init_supabaseClient(), supabaseClient_exports));
-      if (!supabase2) return;
-      const { data: storesData } = await supabase2.from("stores").select("*").limit(1);
-      if (!storesData || storesData.length === 0) {
-        console.warn("\u26A0\uFE0F  No store found in Supabase. Please insert a store row first.");
-        return;
+var Database, db;
+var init_db = __esm({
+  "server/db.ts"() {
+    init_supabaseDb();
+    init_supabaseClient();
+    Database = class {
+      constructor() {
+        this.cache = {
+          stores: [],
+          users: [],
+          categories: [],
+          products: [],
+          stock_movements: [],
+          sales: [],
+          sale_items: [],
+          expenses: [],
+          audit_logs: [],
+          bill_sequences: []
+        };
+        this.initialized = false;
+        this.initPromise = null;
+        this.sequenceCache = /* @__PURE__ */ new Map();
+        this.initPromise = this.init();
       }
-      const storeId = storesData[0].id;
-      this.cache.stores = storesData;
-      const [
-        users,
-        categories,
-        products,
-        stock_movements,
-        sales,
-        expenses,
-        audit_logs
-      ] = await Promise.all([
-        SupabaseDb.getUsers(storeId),
-        SupabaseDb.getCategories(storeId),
-        SupabaseDb.getProducts(storeId),
-        SupabaseDb.getStockMovements(storeId),
-        SupabaseDb.getSales(storeId),
-        SupabaseDb.getExpenses(storeId),
-        SupabaseDb.getAuditLogs(storeId)
-      ]);
-      this.cache.users = users;
-      this.cache.categories = categories;
-      this.cache.products = products;
-      this.cache.stock_movements = stock_movements;
-      this.cache.sales = sales;
-      this.cache.expenses = expenses;
-      this.cache.audit_logs = audit_logs;
-      const saleItems = [];
-      sales.forEach((s) => {
-        if (s.items && Array.isArray(s.items)) {
-          saleItems.push(...s.items);
+      waitForInit() {
+        return this.initPromise ?? Promise.resolve();
+      }
+      async init() {
+        if (!isSupabaseConfigured) {
+          console.warn("\u26A0\uFE0F  SUPABASE NOT CONFIGURED \u2014 set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env");
+          this.initialized = true;
+          return;
         }
-      });
-      this.cache.sale_items = saleItems;
-      console.log(`\u2705 Supabase sync complete \u2014 store: "${storesData[0].name}", users: ${users.length}, products: ${products.length}`);
-    } catch (err) {
-      console.error("\u274C Failed to sync from Supabase:", err);
-    }
-  }
-  // save() is a no-op now — all writes go directly to Supabase via services
-  save() {
-  }
-  // Getters for in-memory cache (used as read-through cache)
-  get stores() {
-    return this.cache.stores;
-  }
-  get users() {
-    return this.cache.users;
-  }
-  get categories() {
-    return this.cache.categories;
-  }
-  get products() {
-    return this.cache.products;
-  }
-  get stock_movements() {
-    return this.cache.stock_movements;
-  }
-  get sales() {
-    return this.cache.sales;
-  }
-  get sale_items() {
-    return this.cache.sale_items;
-  }
-  get expenses() {
-    return this.cache.expenses;
-  }
-  get audit_logs() {
-    return this.cache.audit_logs;
-  }
-  get bill_sequences() {
-    return this.cache.bill_sequences;
-  }
-  // Sequential bill number — uses Supabase bill_sequences table if configured
-  async getNextBillNumberAsync(storeId) {
-    const store = this.cache.stores.find((s) => s.id === storeId);
-    if (!store) throw new Error("Store not found");
-    const year = (/* @__PURE__ */ new Date()).getFullYear();
-    if (isSupabaseConfigured) {
-      const { supabase: supabase2 } = await Promise.resolve().then(() => (init_supabaseClient(), supabaseClient_exports));
-      if (!supabase2) throw new Error("Supabase client not available");
-      const { data, error } = await supabase2.rpc("increment_bill_sequence", {
-        p_store_id: storeId,
-        p_year: year
-      });
-      if (error) {
-        const { data: existing } = await supabase2.from("bill_sequences").select("last_number").eq("store_id", storeId).eq("year", year).maybeSingle();
-        const next = (existing?.last_number ?? 0) + 1;
-        await supabase2.from("bill_sequences").upsert({ store_id: storeId, year, last_number: next }, { onConflict: "store_id,year" });
-        const formattedNum3 = String(next).padStart(6, "0");
-        return `${store.invoice_prefix || store.code || "INV"}-${year}-${formattedNum3}`;
+        await this.syncFromSupabase();
+        this.initialized = true;
       }
-      const formattedNum2 = String(data).padStart(6, "0");
-      return `${store.invoice_prefix || store.code || "INV"}-${year}-${formattedNum2}`;
-    }
-    let seq = this.cache.bill_sequences.find((s) => s.store_id === storeId && s.year === year);
-    if (!seq) {
-      seq = { store_id: storeId, year, last_number: 0 };
-      this.cache.bill_sequences.push(seq);
-    }
-    seq.last_number += 1;
-    const formattedNum = String(seq.last_number).padStart(6, "0");
-    return `${store.invoice_prefix || store.code || "INV"}-${year}-${formattedNum}`;
-  }
-  // Sync-compatible wrapper (for services not yet async)
-  getNextBillNumber(storeId) {
-    const store = this.cache.stores.find((s) => s.id === storeId);
-    if (!store) throw new Error("Store not found");
-    const year = (/* @__PURE__ */ new Date()).getFullYear();
-    let seq = this.cache.bill_sequences.find((s) => s.store_id === storeId && s.year === year);
-    if (!seq) {
-      seq = { store_id: storeId, year, last_number: 0 };
-      this.cache.bill_sequences.push(seq);
-    }
-    seq.last_number += 1;
-    const formattedNum = String(seq.last_number).padStart(6, "0");
-    return `${store.invoice_prefix || store.code || "INV"}-${year}-${formattedNum}`;
-  }
-};
-var db = new Database();
-
-// server/services/authService.ts
-import crypto4 from "crypto";
-init_supabaseClient();
-
-// server/services/auditService.ts
-import crypto3 from "crypto";
-var AuditService = class {
-  static log(params) {
-    const entry = {
-      id: crypto3.randomUUID(),
-      store_id: params.storeId,
-      user_id: params.userId,
-      user_name: params.userName,
-      action: params.action,
-      entity_type: params.entityType,
-      entity_id: params.entityId,
-      before_data: params.beforeData,
-      after_data: params.afterData,
-      ip_address: params.ipAddress,
-      user_agent: params.userAgent,
-      created_at: (/* @__PURE__ */ new Date()).toISOString()
+      async syncFromSupabase() {
+        if (!isSupabaseConfigured) return;
+        try {
+          const { supabase: supabase2 } = await Promise.resolve().then(() => (init_supabaseClient(), supabaseClient_exports));
+          if (!supabase2) return;
+          const { data: storesData, error: storeErr } = await supabase2.from("stores").select("*").limit(1);
+          if (storeErr) {
+            console.error("\u274C Failed to fetch store from Supabase:", storeErr.message);
+          }
+          if (!storesData || storesData.length === 0) {
+            console.warn("\u26A0\uFE0F  No store returned from Supabase. Falling back to default Jayam Stores profile.");
+            this.cache.stores = [{
+              id: "a0000000-0000-0000-0000-000000000001",
+              name: "Jayam Stores",
+              code: "STORE-01",
+              address: "123 Main Commercial Street",
+              phone: "+91 9876543210",
+              email: "jayam@gmail.com",
+              gstin: "",
+              currency: "INR",
+              timezone: "Asia/Kolkata",
+              invoice_prefix: "BILL",
+              created_at: (/* @__PURE__ */ new Date()).toISOString(),
+              updated_at: (/* @__PURE__ */ new Date()).toISOString()
+            }];
+            return;
+          }
+          const storeId = storesData[0].id;
+          this.cache.stores = storesData;
+          const [
+            users,
+            categories,
+            products,
+            stock_movements,
+            sales,
+            expenses,
+            audit_logs
+          ] = await Promise.all([
+            SupabaseDb.getUsers(storeId),
+            SupabaseDb.getCategories(storeId),
+            SupabaseDb.getProducts(storeId),
+            SupabaseDb.getStockMovements(storeId),
+            SupabaseDb.getSales(storeId),
+            SupabaseDb.getExpenses(storeId),
+            SupabaseDb.getAuditLogs(storeId)
+          ]);
+          this.cache.users = users;
+          if (categories.length === 0) {
+            const { DEFAULT_STORE_CATEGORIES: DEFAULT_STORE_CATEGORIES2 } = await Promise.resolve().then(() => (init_productService(), productService_exports));
+            const seeded = await SupabaseDb.seedDefaultCategories(storeId, DEFAULT_STORE_CATEGORIES2);
+            this.cache.categories = seeded.length > 0 ? seeded : [];
+          } else {
+            this.cache.categories = categories;
+          }
+          this.cache.products = products;
+          this.cache.stock_movements = stock_movements;
+          this.cache.sales = sales;
+          this.cache.expenses = expenses;
+          this.cache.audit_logs = audit_logs;
+          const saleItems = [];
+          sales.forEach((s) => {
+            if (s.items && Array.isArray(s.items)) {
+              saleItems.push(...s.items);
+            }
+          });
+          this.cache.sale_items = saleItems;
+          console.log(`\u2705 Supabase sync complete \u2014 store: "${storesData[0].name}", users: ${users.length}, products: ${products.length}`);
+        } catch (err) {
+          console.error("\u274C Failed to sync from Supabase:", err);
+        }
+      }
+      // save() is a no-op now — all writes go directly to Supabase via services
+      save() {
+      }
+      // Getters for in-memory cache (used as read-through cache)
+      get stores() {
+        return this.cache.stores;
+      }
+      get users() {
+        return this.cache.users;
+      }
+      get categories() {
+        return this.cache.categories;
+      }
+      get products() {
+        return this.cache.products;
+      }
+      get stock_movements() {
+        return this.cache.stock_movements;
+      }
+      get sales() {
+        return this.cache.sales;
+      }
+      get sale_items() {
+        return this.cache.sale_items;
+      }
+      get expenses() {
+        return this.cache.expenses;
+      }
+      get audit_logs() {
+        return this.cache.audit_logs;
+      }
+      get bill_sequences() {
+        return this.cache.bill_sequences;
+      }
+      // Sequential bill number — instant in-memory generation with non-blocking background sync
+      async getNextBillNumberAsync(storeId) {
+        const store = this.cache.stores.find((s) => s.id === storeId);
+        if (!store) throw new Error("Store not found");
+        const year = (/* @__PURE__ */ new Date()).getFullYear();
+        const cleanPrefix = (store.invoice_prefix && store.invoice_prefix !== "INV" && store.invoice_prefix !== "INV-" ? store.invoice_prefix : "BILL").replace(/-+$/, "");
+        const billPrefix = `${cleanPrefix}-${year}-`;
+        const seqKey = `${storeId}_${year}`;
+        let next = this.sequenceCache.get(seqKey);
+        if (next === void 0) {
+          let maxFromSales = 0;
+          this.cache.sales.filter((s) => s.store_id === storeId && s.bill_number?.startsWith(billPrefix)).forEach((s) => {
+            const m = s.bill_number.match(/(\d+)$/);
+            if (m) {
+              const num = parseInt(m[1], 10);
+              if (!isNaN(num) && num > maxFromSales) maxFromSales = num;
+            }
+          });
+          if (isSupabaseConfigured) {
+            try {
+              const { supabase: supabase2 } = await Promise.resolve().then(() => (init_supabaseClient(), supabaseClient_exports));
+              if (supabase2) {
+                const { data: existingSeq } = await supabase2.from("bill_sequences").select("last_number").eq("store_id", storeId).eq("year", year).maybeSingle();
+                const maxFromSeq = existingSeq?.last_number ?? 0;
+                maxFromSales = Math.max(maxFromSales, maxFromSeq);
+              }
+            } catch (_) {
+            }
+          }
+          next = maxFromSales + 1;
+        } else {
+          next = next + 1;
+        }
+        this.sequenceCache.set(seqKey, next);
+        if (isSupabaseConfigured) {
+          Promise.resolve().then(() => (init_supabaseClient(), supabaseClient_exports)).then(({ supabase: supabase2 }) => {
+            if (supabase2) {
+              Promise.resolve(
+                supabase2.from("bill_sequences").upsert({ store_id: storeId, year, last_number: next }, { onConflict: "store_id,year" })
+              ).catch(() => {
+              });
+            }
+          }).catch(() => {
+          });
+        }
+        const formattedNum = String(next).padStart(6, "0");
+        return `${billPrefix}${formattedNum}`;
+      }
+      // Sync-compatible wrapper (for services not yet async)
+      getNextBillNumber(storeId) {
+        const store = this.cache.stores.find((s) => s.id === storeId);
+        if (!store) throw new Error("Store not found");
+        const year = (/* @__PURE__ */ new Date()).getFullYear();
+        let seq = this.cache.bill_sequences.find((s) => s.store_id === storeId && s.year === year);
+        if (!seq) {
+          seq = { store_id: storeId, year, last_number: 0 };
+          this.cache.bill_sequences.push(seq);
+        }
+        seq.last_number += 1;
+        const formattedNum = String(seq.last_number).padStart(6, "0");
+        const pfx = (store.invoice_prefix && store.invoice_prefix !== "INV" && store.invoice_prefix !== "INV-" ? store.invoice_prefix : "BILL").replace(/-+$/, "");
+        return `${pfx}-${year}-${formattedNum}`;
+      }
     };
-    db.audit_logs.unshift(entry);
-    if (db.audit_logs.length > 5e3) {
-      db.audit_logs.pop();
-    }
-    db.save();
-    return entry;
+    db = new Database();
   }
-  static getLogs(storeId, filter) {
-    let logs = db.audit_logs.filter((l) => l.store_id === storeId);
-    if (filter?.action) {
-      logs = logs.filter((l) => l.action.toLowerCase().includes(filter.action.toLowerCase()));
-    }
-    if (filter?.entityType) {
-      logs = logs.filter((l) => l.entity_type.toLowerCase() === filter.entityType.toLowerCase());
-    }
-    const limit = filter?.limit || 100;
-    return logs.slice(0, limit);
-  }
-};
+});
+
+// server/apiApp.ts
+init_db();
+import "dotenv/config";
+import express from "express";
+import cookieParser from "cookie-parser";
+import QRCode from "qrcode";
 
 // server/services/authService.ts
+init_db();
+init_supabaseDb();
+init_supabaseClient();
+init_auditService();
+import crypto5 from "crypto";
 var SESSION_SECRET = process.env.SESSION_SECRET || "ledgerstore-supermarket-hmac-secure-token-secret-2026";
 function signToken(data) {
   const payload = Buffer.from(JSON.stringify(data)).toString("base64url");
-  const sig = crypto4.createHmac("sha256", SESSION_SECRET).update(payload).digest("base64url");
+  const sig = crypto5.createHmac("sha256", SESSION_SECRET).update(payload).digest("base64url");
   return `${payload}.${sig}`;
 }
 function verifyToken(token) {
@@ -538,11 +1033,11 @@ function verifyToken(token) {
   const parts = token.split(".");
   if (parts.length !== 2) return null;
   const [payload, sig] = parts;
-  const expectedSig = crypto4.createHmac("sha256", SESSION_SECRET).update(payload).digest("base64url");
+  const expectedSig = crypto5.createHmac("sha256", SESSION_SECRET).update(payload).digest("base64url");
   try {
     const bufA = Buffer.from(sig);
     const bufB = Buffer.from(expectedSig);
-    if (bufA.length !== bufB.length || !crypto4.timingSafeEqual(bufA, bufB)) {
+    if (bufA.length !== bufB.length || !crypto5.timingSafeEqual(bufA, bufB)) {
       return null;
     }
     const data = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
@@ -701,10 +1196,10 @@ var AuthService = class {
         },
         store: store || {
           id: session.storeId,
-          name: "LedgerStore Supermarket",
+          name: "Jayam Stores",
           code: "STORE-01",
           currency: "INR",
-          invoice_prefix: "INV-"
+          invoice_prefix: "BILL-"
         },
         session
       };
@@ -713,10 +1208,10 @@ var AuthService = class {
       user: safeUser(user),
       store: store || {
         id: session.storeId,
-        name: "LedgerStore Supermarket",
+        name: "Jayam Stores",
         code: "STORE-01",
         currency: "INR",
-        invoice_prefix: "INV-"
+        invoice_prefix: "BILL-"
       },
       session
     };
@@ -738,244 +1233,13 @@ var AuthService = class {
   }
 };
 
-// server/services/productService.ts
-init_supabaseClient();
-import crypto5 from "crypto";
-var ProductService = class {
-  static listProducts(storeId, options) {
-    let list = db.products.filter((p) => p.store_id === storeId);
-    if (options?.activeOnly !== false) {
-      list = list.filter((p) => p.active);
-    }
-    if (options?.barcode) {
-      const b = options.barcode.trim();
-      list = list.filter((p) => p.barcode === b);
-      return list;
-    }
-    if (options?.search) {
-      const q = options.search.trim().toLowerCase();
-      list = list.filter(
-        (p) => p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q) || p.barcode.toLowerCase().includes(q) || p.description && p.description.toLowerCase().includes(q)
-      );
-    }
-    if (options?.categoryId) {
-      list = list.filter((p) => p.category_id === options.categoryId);
-    }
-    if (options?.lowStock) {
-      list = list.filter((p) => p.current_stock <= p.minimum_stock && p.current_stock > 0);
-    }
-    if (options?.outOfStock) {
-      list = list.filter((p) => p.current_stock <= 0);
-    }
-    return list;
-  }
-  static getProduct(storeId, productId) {
-    const prod = db.products.find((p) => p.id === productId && p.store_id === storeId);
-    if (!prod) throw new Error("Product not found");
-    return prod;
-  }
-  static async createProduct(storeId, userId, userName, payload) {
-    const cleanSku = payload.sku.trim();
-    const cleanBarcode = payload.barcode.trim();
-    if (cleanSku && db.products.some((p) => p.store_id === storeId && p.sku.toLowerCase() === cleanSku.toLowerCase())) {
-      throw new Error(`SKU "${cleanSku}" is already in use by another product`);
-    }
-    if (cleanBarcode && db.products.some((p) => p.store_id === storeId && p.barcode.toLowerCase() === cleanBarcode.toLowerCase())) {
-      throw new Error(`Barcode "${cleanBarcode}" is already in use by another product`);
-    }
-    const now = (/* @__PURE__ */ new Date()).toISOString();
-    const newProduct = {
-      id: crypto5.randomUUID(),
-      store_id: storeId,
-      category_id: payload.categoryId && payload.categoryId.trim() ? payload.categoryId.trim() : void 0,
-      name: payload.name.trim(),
-      sku: cleanSku,
-      barcode: cleanBarcode,
-      hsn_code: payload.hsnCode?.trim() || "",
-      description: payload.description || "",
-      purchase_price: Math.max(0, Number(payload.purchasePrice) || 0),
-      purchase_tax_type: payload.purchaseTaxType || "EXCLUSIVE",
-      selling_price: Math.max(0, Number(payload.sellingPrice) || 0),
-      tax_rate: Math.max(0, Number(payload.taxRate) || 0),
-      tax_type: payload.taxType || "EXCLUSIVE",
-      current_stock: Math.max(0, Number(payload.currentStock) || 0),
-      minimum_stock: Math.max(0, Number(payload.minimumStock) || 0),
-      unit: payload.unit || "piece",
-      active: true,
-      created_at: now,
-      updated_at: now
-    };
-    if (isSupabaseConfigured) {
-      const saved = await SupabaseDb.createProduct(newProduct);
-      db.products.push(saved);
-      if (saved.current_stock > 0) {
-        const movement = {
-          store_id: storeId,
-          product_id: saved.id,
-          product_name: saved.name,
-          user_id: userId,
-          user_name: userName,
-          type: "INITIAL_STOCK",
-          quantity: saved.current_stock,
-          before_stock: 0,
-          after_stock: saved.current_stock,
-          reason: "Initial stock on product creation"
-        };
-        const savedMov = await SupabaseDb.createStockMovement(movement);
-        db.stock_movements.unshift(savedMov);
-      }
-      AuditService.log({
-        storeId,
-        userId,
-        userName,
-        action: "PRODUCT_CREATED",
-        entityType: "PRODUCT",
-        entityId: saved.id,
-        afterData: { name: saved.name, sku: saved.sku, sellingPrice: saved.selling_price }
-      });
-      return saved;
-    }
-    db.products.push(newProduct);
-    if (newProduct.current_stock > 0) {
-      db.stock_movements.unshift({
-        id: crypto5.randomUUID(),
-        store_id: storeId,
-        product_id: newProduct.id,
-        product_name: newProduct.name,
-        user_id: userId,
-        user_name: userName,
-        type: "INITIAL_STOCK",
-        quantity: newProduct.current_stock,
-        before_stock: 0,
-        after_stock: newProduct.current_stock,
-        reason: "Initial stock on product creation",
-        created_at: now
-      });
-    }
-    AuditService.log({
-      storeId,
-      userId,
-      userName,
-      action: "PRODUCT_CREATED",
-      entityType: "PRODUCT",
-      entityId: newProduct.id,
-      afterData: { name: newProduct.name, sku: newProduct.sku, sellingPrice: newProduct.selling_price }
-    });
-    return newProduct;
-  }
-  static async updateProduct(storeId, userId, userName, productId, payload) {
-    const product = this.getProduct(storeId, productId);
-    const beforeData = { ...product };
-    if (payload.sku && payload.sku !== product.sku) {
-      const exists = db.products.some((p) => p.store_id === storeId && p.id !== productId && p.sku.toLowerCase() === payload.sku.toLowerCase());
-      if (exists) throw new Error(`SKU "${payload.sku}" already exists`);
-      product.sku = payload.sku;
-    }
-    if (payload.barcode && payload.barcode !== product.barcode) {
-      const exists = db.products.some((p) => p.store_id === storeId && p.id !== productId && p.barcode.toLowerCase() === payload.barcode.toLowerCase());
-      if (exists) throw new Error(`Barcode "${payload.barcode}" already exists`);
-      product.barcode = payload.barcode;
-    }
-    if (payload.hsnCode !== void 0) product.hsn_code = payload.hsnCode.trim();
-    if (payload.name !== void 0) product.name = payload.name.trim();
-    if (payload.categoryId !== void 0) product.category_id = payload.categoryId;
-    if (payload.description !== void 0) product.description = payload.description;
-    if (payload.purchasePrice !== void 0) product.purchase_price = Math.max(0, Number(payload.purchasePrice));
-    if (payload.purchaseTaxType !== void 0) product.purchase_tax_type = payload.purchaseTaxType;
-    if (payload.sellingPrice !== void 0) product.selling_price = Math.max(0, Number(payload.sellingPrice));
-    if (payload.taxRate !== void 0) product.tax_rate = Math.max(0, Number(payload.taxRate));
-    if (payload.taxType !== void 0) product.tax_type = payload.taxType;
-    if (payload.minimumStock !== void 0) product.minimum_stock = Math.max(0, Number(payload.minimumStock));
-    if (payload.unit !== void 0) product.unit = payload.unit;
-    if (payload.active !== void 0) product.active = payload.active;
-    product.updated_at = (/* @__PURE__ */ new Date()).toISOString();
-    if (isSupabaseConfigured) {
-      await SupabaseDb.updateProduct(productId, product);
-    }
-    AuditService.log({
-      storeId,
-      userId,
-      userName,
-      action: "PRODUCT_UPDATED",
-      entityType: "PRODUCT",
-      entityId: product.id,
-      beforeData,
-      afterData: { ...product }
-    });
-    return product;
-  }
-  static async toggleActive(storeId, userId, userName, productId, active) {
-    const product = this.getProduct(storeId, productId);
-    const before = product.active;
-    product.active = active;
-    product.updated_at = (/* @__PURE__ */ new Date()).toISOString();
-    if (isSupabaseConfigured) {
-      await SupabaseDb.updateProduct(productId, { active, updated_at: product.updated_at });
-    }
-    AuditService.log({
-      storeId,
-      userId,
-      userName,
-      action: active ? "PRODUCT_ACTIVATED" : "PRODUCT_DEACTIVATED",
-      entityType: "PRODUCT",
-      entityId: product.id,
-      beforeData: { active: before },
-      afterData: { active }
-    });
-    return product;
-  }
-};
-var CategoryService = class {
-  static listCategories(storeId) {
-    return db.categories.filter((c) => c.store_id === storeId && c.active);
-  }
-  static async createCategory(storeId, userId, userName, name, description) {
-    const clean = name.trim();
-    if (db.categories.some((c) => c.store_id === storeId && c.name.toLowerCase() === clean.toLowerCase())) {
-      throw new Error(`Category "${clean}" already exists`);
-    }
-    const now = (/* @__PURE__ */ new Date()).toISOString();
-    const catPayload = {
-      store_id: storeId,
-      name: clean,
-      description: description || "",
-      active: true
-    };
-    if (isSupabaseConfigured) {
-      const saved = await SupabaseDb.createCategory(catPayload);
-      db.categories.push(saved);
-      AuditService.log({
-        storeId,
-        userId,
-        userName,
-        action: "CATEGORY_CREATED",
-        entityType: "CATEGORY",
-        entityId: saved.id,
-        afterData: { name: saved.name }
-      });
-      return saved;
-    }
-    const cat = {
-      id: crypto5.randomUUID(),
-      ...catPayload,
-      created_at: now,
-      updated_at: now
-    };
-    db.categories.push(cat);
-    AuditService.log({
-      storeId,
-      userId,
-      userName,
-      action: "CATEGORY_CREATED",
-      entityType: "CATEGORY",
-      entityId: cat.id,
-      afterData: { name: cat.name }
-    });
-    return cat;
-  }
-};
+// server/apiApp.ts
+init_productService();
 
 // server/services/inventoryService.ts
+init_db();
+init_auditService();
+init_supabaseDb();
 init_supabaseClient();
 import crypto6 from "crypto";
 var InventoryService = class {
@@ -1142,6 +1406,9 @@ var InventoryService = class {
 };
 
 // server/services/billingService.ts
+init_db();
+init_auditService();
+init_supabaseDb();
 init_supabaseClient();
 import crypto7 from "crypto";
 function round2(num) {
@@ -1291,26 +1558,41 @@ var BillingService = class {
       items: saleItems
     };
     if (isSupabaseConfigured) {
-      const { supabase: supabase2 } = await Promise.resolve().then(() => (init_supabaseClient(), supabaseClient_exports));
-      if (supabase2) {
-        await Promise.all(
-          verifiedProducts.map(
-            (vp) => SupabaseDb.updateProduct(vp.product.id, {
-              current_stock: vp.product.current_stock,
-              updated_at: now
-            }).catch(() => {
-            })
+      let saved;
+      try {
+        const [saleResult] = await Promise.all([
+          SupabaseDb.createSale(
+            { ...newSale, items: void 0 },
+            saleItems.map(({ id, sale_id, created_at, ...rest }) => rest)
+          ),
+          SupabaseDb.createStockMovementsBatch(stockMovements).catch((err) => {
+            console.error("Stock movements batch error:", err);
+          }),
+          Promise.all(
+            verifiedProducts.map(
+              (vp) => SupabaseDb.updateProduct(vp.product.id, {
+                current_stock: vp.product.current_stock,
+                updated_at: now
+              }).catch(() => {
+              })
+            )
           )
-        );
+        ]);
+        saved = saleResult;
+      } catch (insertErr) {
+        const msg = String(insertErr?.message || "");
+        if (msg.includes("sales_bill_number_key") || msg.includes("unique constraint") || msg.includes("duplicate key")) {
+          console.warn("Bill number collision detected, generating next sequence and retrying...");
+          const retryBillNumber = await db.getNextBillNumberAsync(storeId);
+          newSale.bill_number = retryBillNumber;
+          saved = await SupabaseDb.createSale(
+            { ...newSale, items: void 0 },
+            saleItems.map(({ id, sale_id, created_at, ...rest }) => rest)
+          );
+        } else {
+          throw insertErr;
+        }
       }
-      const saved = await SupabaseDb.createSale(
-        { ...newSale, items: void 0 },
-        saleItems.map(({ id, sale_id, created_at, ...rest }) => rest)
-      );
-      await Promise.all(
-        stockMovements.map((m) => SupabaseDb.createStockMovement(m).catch(() => {
-        }))
-      );
       db.sales.unshift(saved);
       db.sale_items.push(...saleItems);
       db.stock_movements.unshift(...stockMovements);
@@ -1423,7 +1705,10 @@ var BillingService = class {
 };
 
 // server/services/employeeService.ts
+init_db();
+init_supabaseDb();
 init_supabaseClient();
+init_auditService();
 import crypto8 from "crypto";
 var EmployeeService = class {
   static listEmployees(storeId) {
@@ -1537,6 +1822,30 @@ var EmployeeService = class {
     });
     return safeUser(user);
   }
+  static async deleteEmployee(storeId, adminUserId, adminUserName, employeeId) {
+    if (adminUserId === employeeId) {
+      throw new Error("You cannot delete your own admin account");
+    }
+    const user = db.users.find((u) => u.id === employeeId && u.store_id === storeId);
+    if (!user) throw new Error("Staff member not found");
+    if (isSupabaseConfigured) {
+      await SupabaseDb.deleteUser(employeeId);
+    }
+    const idx = db.users.findIndex((u) => u.id === employeeId && u.store_id === storeId);
+    if (idx !== -1) {
+      db.users.splice(idx, 1);
+    }
+    AuditService.log({
+      storeId,
+      userId: adminUserId,
+      userName: adminUserName,
+      action: "USER_DELETED",
+      entityType: "USER",
+      entityId: employeeId,
+      beforeData: { name: user.name, email: user.email, role: user.role }
+    });
+    return { success: true, message: `Staff member "${user.name}" removed` };
+  }
 };
 var ExpenseService = class {
   static listExpenses(storeId, options) {
@@ -1610,6 +1919,7 @@ var ExpenseService = class {
 };
 
 // server/services/verificationService.ts
+init_db();
 var VerificationService = class {
   static verifyBill(token) {
     if (!token || typeof token !== "string") {
@@ -1675,6 +1985,7 @@ var VerificationService = class {
 };
 
 // server/services/dashboardService.ts
+init_db();
 function round22(num) {
   return Math.round((num + Number.EPSILON) * 100) / 100;
 }
@@ -1799,6 +2110,7 @@ var DashboardService = class {
 };
 
 // server/services/reportService.ts
+init_db();
 function round23(num) {
   return Math.round((num + Number.EPSILON) * 100) / 100;
 }
@@ -1958,6 +2270,7 @@ var ReportService = class {
 };
 
 // server/apiApp.ts
+init_auditService();
 init_supabaseClient();
 var app = express();
 app.use((req, res, next) => {
@@ -1977,7 +2290,7 @@ app.use((req, _res, next) => {
   if (req.url && req.url.startsWith("/api/index.js")) {
     req.url = req.url.replace("/api/index.js", "/api");
   }
-  if (req.url && !req.url.startsWith("/api") && !req.url.startsWith("/assets") && !req.url.includes(".")) {
+  if (process.env.VERCEL && req.url && !req.url.startsWith("/api") && !req.url.startsWith("/@") && !req.url.startsWith("/src") && !req.url.startsWith("/node_modules") && !req.url.includes(".")) {
     req.url = "/api" + (req.url.startsWith("/") ? req.url : "/" + req.url);
   }
   next();
@@ -2135,16 +2448,55 @@ app.post("/api/products/:id/deactivate", requireAuth, requireAdmin, async (req, 
     res.status(400).json({ error: { message: err.message } });
   }
 });
-app.get("/api/categories", requireAuth, (req, res) => {
-  const categories = CategoryService.listCategories(req.user.store_id);
-  res.json(categories);
+app.delete("/api/products/:id", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const result = await ProductService.deleteProduct(req.user.store_id, req.user.id, req.user.name, req.params.id);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: { message: err.message } });
+  }
+});
+app.get("/api/categories", requireAuth, async (req, res) => {
+  try {
+    const categories = await CategoryService.listCategories(req.user.store_id);
+    res.json(categories);
+  } catch (err) {
+    res.status(500).json({ error: { message: err.message } });
+  }
 });
 app.post("/api/categories", requireAuth, async (req, res) => {
   try {
     const { name, description } = req.body;
-    if (!name) return res.status(400).json({ error: { message: "Category name is required" } });
+    if (!name || typeof name !== "string" || !name.trim()) {
+      return res.status(400).json({ error: { message: "Category name is required" } });
+    }
     const cat = await CategoryService.createCategory(req.user.store_id, req.user.id, req.user.name, name, description);
     res.status(201).json(cat);
+  } catch (err) {
+    res.status(400).json({ error: { message: err.message } });
+  }
+});
+app.delete("/api/categories/:id", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const result = await CategoryService.deleteCategory(
+      req.user.store_id,
+      req.user.id,
+      req.user.name,
+      req.params.id
+    );
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: { message: err.message } });
+  }
+});
+app.post("/api/categories/seed-defaults", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const seeded = await CategoryService.seedDefaultCategories(
+      req.user.store_id,
+      req.user.id,
+      req.user.name
+    );
+    res.json(seeded);
   } catch (err) {
     res.status(400).json({ error: { message: err.message } });
   }
@@ -2254,6 +2606,35 @@ app.post("/api/sales/:id/void", requireAuth, requireAdmin, async (req, res) => {
     res.status(400).json({ error: { message: err.message } });
   }
 });
+app.delete("/api/sales/purge-all", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const storeId = req.user.store_id;
+    if (isSupabaseConfigured) {
+      const { supabase: supabase2 } = await Promise.resolve().then(() => (init_supabaseClient(), supabaseClient_exports));
+      if (supabase2) {
+        await supabase2.from("sale_items").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+        await supabase2.from("sales").delete().eq("store_id", storeId);
+        await supabase2.from("bill_sequences").update({ last_number: 0 }).eq("store_id", storeId);
+      }
+    }
+    db.sales.length = 0;
+    db.sale_items.length = 0;
+    const seq = db.bill_sequences.find((s) => s.store_id === storeId);
+    if (seq) seq.last_number = 0;
+    AuditService.log({
+      storeId,
+      userId: req.user.id,
+      userName: req.user.name,
+      action: "SALES_PURGED",
+      entityType: "STORE",
+      entityId: storeId,
+      afterData: { message: "All sales purged and bill sequences reset to 0" }
+    });
+    res.json({ success: true, message: "All old billings removed and sequences reset to 0" });
+  } catch (err) {
+    res.status(500).json({ error: { message: err.message } });
+  }
+});
 app.get("/api/employees", requireAuth, requireAdmin, (req, res) => {
   const employees = EmployeeService.listEmployees(req.user.store_id);
   res.json(employees);
@@ -2295,6 +2676,19 @@ app.post("/api/employees/:id/deactivate", requireAuth, requireAdmin, async (req,
       false
     );
     res.json(emp);
+  } catch (err) {
+    res.status(400).json({ error: { message: err.message } });
+  }
+});
+app.delete("/api/employees/:id", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const result = await EmployeeService.deleteEmployee(
+      req.user.store_id,
+      req.user.id,
+      req.user.name,
+      req.params.id
+    );
+    res.json(result);
   } catch (err) {
     res.status(400).json({ error: { message: err.message } });
   }
@@ -2398,7 +2792,7 @@ app.patch("/api/settings", requireAuth, requireAdmin, async (req, res) => {
     if (invoicePrefix) store.invoice_prefix = invoicePrefix;
     store.updated_at = (/* @__PURE__ */ new Date()).toISOString();
     if (isSupabaseConfigured) {
-      const { SupabaseDb: SupabaseDb2 } = await import("./server/supabaseDb.ts");
+      const { SupabaseDb: SupabaseDb2 } = await Promise.resolve().then(() => (init_supabaseDb(), supabaseDb_exports));
       await SupabaseDb2.updateStore(store.id, store).catch(() => {
       });
     }

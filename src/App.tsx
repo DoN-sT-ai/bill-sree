@@ -84,8 +84,10 @@ const MainLayout: React.FC = () => {
         </div>
 
         {/* Dynamic Workspace View */}
-        <main className="flex-1 flex flex-col min-h-0 overflow-y-auto md:overflow-hidden pb-16 md:pb-0">
-          {currentTab === 'billing' && <POSWorkspace />}
+        <main className="flex-1 flex flex-col min-h-0 overflow-y-auto pb-16 md:pb-0">
+          {currentTab === 'billing' && (
+            <POSWorkspace onNavigateToSales={() => setCurrentTab('sales')} />
+          )}
           {currentTab === 'inventory' && <InventoryManager />}
           {currentTab === 'movements' && <StockMovementsList />}
           {currentTab === 'sales' && <BillHistory />}

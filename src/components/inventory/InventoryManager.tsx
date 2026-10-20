@@ -16,6 +16,10 @@ import {
   Barcode,
   Camera,
   RefreshCw,
+  Trash2,
+  Tag,
+  Sparkles,
+  Lock,
 } from 'lucide-react';
 import { CameraScannerModal } from '../billing/CameraScannerModal';
 
@@ -33,6 +37,7 @@ export const InventoryManager: React.FC = () => {
   const [receiveModalProduct, setReceiveModalProduct] = useState<Product | null>(null);
   const [adjustModalProduct, setAdjustModalProduct] = useState<Product | null>(null);
   const [productEditModal, setProductEditModal] = useState<Product | null | 'new'>(null);
+  const [productToDelete, setProductToDelete] = useState<Product | null>(null);
   const [scannerTarget, setScannerTarget] = useState<'search' | 'productForm' | null>(null);
 
   // Form states for modals
@@ -50,6 +55,20 @@ export const InventoryManager: React.FC = () => {
 
   const [modalSubmitting, setModalSubmitting] = useState<boolean>(false);
   const [feedbackMsg, setFeedbackMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Category management modal states
+  const [showCategoryModal, setShowCategoryModal] = useState<boolean>(false);
+  const [categoryToDelete, setCategoryToDelete] = useState<Category | null>(null);
+  const [newCatName, setNewCatName] = useState<string>('');
+  const [newCatDesc, setNewCatDesc] = useState<string>('');
+  const [catModalLoading, setCatModalLoading] = useState<boolean>(false);
+  const [isSeedingDefaults, setIsSeedingDefaults] = useState<boolean>(false);
+
+  // Inline custom category creation in Product modal
+  const [showInlineAddCategory, setShowInlineAddCategory] = useState<boolean>(false);
+  const [inlineCatName, setInlineCatName] = useState<string>('');
+  const [inlineCatDesc, setInlineCatDesc] = useState<string>('');
+  const [inlineCatLoading, setInlineCatLoading] = useState<boolean>(false);
 
   // Product Form State (Add / Edit)
   const [productForm, setProductForm] = useState({
@@ -90,7 +109,11 @@ export const InventoryManager: React.FC = () => {
   }, []);
 
   const filteredProducts = products.filter((p) => {
-    if (selectedCategory !== 'all' && p.category_id !== selectedCategory) return false;
+    if (selectedCategory === '__uncategorized__') {
+      if (p.category_id) return false;
+    } else if (selectedCategory !== 'all' && p.category_id !== selectedCategory) {
+      return false;
+    }
     if (stockFilter === 'low' && (p.current_stock > p.minimum_stock || p.current_stock <= 0)) return false;
     if (stockFilter === 'out' && p.current_stock > 0) return false;
     if (gstFilter !== 'all' && Number(p.tax_rate) !== Number(gstFilter)) return false;
@@ -217,7 +240,132 @@ export const InventoryManager: React.FC = () => {
     }
   };
 
+  // Action: Delete Product (Admin Only)
+  const handleDeleteProduct = async () => {
+    if (!productToDelete) return;
+    try {
+      setModalSubmitting(true);
+      await api.deleteProduct(productToDelete.id);
+      setFeedbackMsg({
+        type: 'success',
+        text: `Product "${productToDelete.name}" permanently removed from inventory`,
+      });
+      setProductToDelete(null);
+      await loadData();
+    } catch (err: any) {
+      setFeedbackMsg({ type: 'error', text: err.message || 'Failed to remove product' });
+    } finally {
+      setModalSubmitting(false);
+    }
+  };
+
+  // Action: Create inline category from product modal
+  const handleCreateInlineCategory = async () => {
+    const clean = inlineCatName.trim();
+    if (!clean) return;
+    try {
+      setInlineCatLoading(true);
+      const newCat = await api.createCategory({
+        name: clean,
+        description: inlineCatDesc.trim() || undefined,
+      });
+      setCategories((prev) => {
+        if (prev.some((c) => c.id === newCat.id)) return prev;
+        return [...prev, newCat];
+      });
+      setProductForm((prev) => ({ ...prev, categoryId: newCat.id }));
+      setShowInlineAddCategory(false);
+      setInlineCatName('');
+      setInlineCatDesc('');
+      setFeedbackMsg({ type: 'success', text: `Category "${newCat.name}" created and selected!` });
+    } catch (err: any) {
+      setFeedbackMsg({ type: 'error', text: err.message || 'Failed to create category' });
+    } finally {
+      setInlineCatLoading(false);
+    }
+  };
+
+  // Action: Create category from category modal
+  const handleCreateCategoryInModal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const clean = newCatName.trim();
+    if (!clean) return;
+    try {
+      setCatModalLoading(true);
+      const newCat = await api.createCategory({
+        name: clean,
+        description: newCatDesc.trim() || undefined,
+      });
+      setCategories((prev) => {
+        if (prev.some((c) => c.id === newCat.id)) return prev;
+        return [...prev, newCat];
+      });
+      setNewCatName('');
+      setNewCatDesc('');
+      setFeedbackMsg({ type: 'success', text: `Category "${newCat.name}" added successfully` });
+    } catch (err: any) {
+      setFeedbackMsg({ type: 'error', text: err.message || 'Failed to add category' });
+    } finally {
+      setCatModalLoading(false);
+    }
+  };
+
+  // Action: Admin delete category
+  const handleDeleteCategory = async () => {
+    if (!categoryToDelete) return;
+    if (!isAdmin) {
+      setFeedbackMsg({ type: 'error', text: 'Admin privileges required to remove categories' });
+      return;
+    }
+    try {
+      setCatModalLoading(true);
+      const res = await api.deleteCategory(categoryToDelete.id);
+      setCategories((prev) => prev.filter((c) => c.id !== categoryToDelete.id));
+      setProducts((prev) =>
+        prev.map((p) =>
+          p.category_id === categoryToDelete.id ? { ...p, category_id: undefined } : p
+        )
+      );
+      if (selectedCategory === categoryToDelete.id) {
+        setSelectedCategory('all');
+      }
+      if (productForm.categoryId === categoryToDelete.id) {
+        setProductForm((prev) => ({ ...prev, categoryId: '' }));
+      }
+      setFeedbackMsg({
+        type: 'success',
+        text: res.message || `Category "${categoryToDelete.name}" removed successfully`,
+      });
+      setCategoryToDelete(null);
+    } catch (err: any) {
+      setFeedbackMsg({ type: 'error', text: err.message || 'Failed to delete category' });
+    } finally {
+      setCatModalLoading(false);
+    }
+  };
+
+  // Action: Admin seed standard categories
+  const handleSeedDefaults = async () => {
+    if (!isAdmin) return;
+    try {
+      setIsSeedingDefaults(true);
+      const seeded = await api.seedDefaultCategories();
+      setCategories(seeded);
+      setFeedbackMsg({
+        type: 'success',
+        text: 'Standard store categories loaded successfully!',
+      });
+    } catch (err: any) {
+      setFeedbackMsg({ type: 'error', text: err.message || 'Failed to seed categories' });
+    } finally {
+      setIsSeedingDefaults(false);
+    }
+  };
+
   const openNewProductModal = () => {
+    setShowInlineAddCategory(false);
+    setInlineCatName('');
+    setInlineCatDesc('');
     setProductForm({
       name: '',
       sku: '',
@@ -238,6 +386,9 @@ export const InventoryManager: React.FC = () => {
   };
 
   const openEditModal = (p: Product) => {
+    setShowInlineAddCategory(false);
+    setInlineCatName('');
+    setInlineCatDesc('');
     setProductForm({
       name: p.name,
       sku: p.sku,
@@ -278,6 +429,16 @@ export const InventoryManager: React.FC = () => {
               title="Refresh catalog"
             >
               <RefreshCw className="w-3.5 h-3.5" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowCategoryModal(true)}
+              className="px-3 py-1.5 border border-neutral-300 text-neutral-700 bg-white hover:bg-neutral-50 text-xs font-semibold rounded transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
+              title="View and manage inventory categories"
+            >
+              <Tag className="w-3.5 h-3.5 text-neutral-500" />
+              <span>Categories ({categories.length})</span>
             </button>
 
             <button
@@ -354,11 +515,20 @@ export const InventoryManager: React.FC = () => {
             value={selectedCategory}
             onChange={(e) => setSelectedCategory(e.target.value)}
             className="px-2 py-1 bg-white border border-neutral-200 rounded text-xs text-neutral-700 focus:outline-none"
+            title="Filter by Category"
           >
-            <option value="all">All Categories</option>
-            {categories.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
+            <option value="all">All Categories ({products.length})</option>
+            {categories.map((c) => {
+              const count = products.filter((p) => p.category_id === c.id).length;
+              return (
+                <option key={c.id} value={c.id}>
+                  {c.name} ({count})
+                </option>
+              );
+            })}
+            <option value="__uncategorized__">
+              Uncategorized ({products.filter((p) => !p.category_id).length})
+            </option>
           </select>
         </div>
       </div>
@@ -506,15 +676,24 @@ export const InventoryManager: React.FC = () => {
                           Adjust
                         </button>
 
-                        {/* Admin Edit */}
+                        {/* Admin Actions */}
                         {isAdmin && (
-                          <button
-                            onClick={() => openEditModal(p)}
-                            className="p-1 text-neutral-400 hover:text-neutral-900 rounded hover:bg-neutral-100 transition-colors inline-flex"
-                            title="Edit product info"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                          </button>
+                          <div className="inline-flex items-center gap-1">
+                            <button
+                              onClick={() => openEditModal(p)}
+                              className="p-1 text-neutral-400 hover:text-neutral-900 rounded hover:bg-neutral-100 transition-colors inline-flex cursor-pointer"
+                              title="Edit product info"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => setProductToDelete(p)}
+                              className="p-1 text-neutral-400 hover:text-red-600 rounded hover:bg-red-50 transition-colors inline-flex cursor-pointer"
+                              title="Remove product from inventory (Admin only)"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         )}
                       </td>
                     </tr>
@@ -897,17 +1076,103 @@ export const InventoryManager: React.FC = () => {
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="font-medium text-neutral-700 block mb-1">Category</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="font-medium text-neutral-700 block text-xs">
+                      Category <span className="text-neutral-400 font-normal">({categories.length} available)</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowInlineAddCategory(!showInlineAddCategory);
+                        setInlineCatName('');
+                        setInlineCatDesc('');
+                      }}
+                      className="text-[11px] text-emerald-600 hover:text-emerald-700 font-medium flex items-center gap-1 cursor-pointer"
+                      title="Create a new custom category right now"
+                    >
+                      <Plus className="w-3 h-3" />
+                      <span>+ Custom Category</span>
+                    </button>
+                  </div>
                   <select
                     value={productForm.categoryId}
-                    onChange={(e) => setProductForm({ ...productForm, categoryId: e.target.value })}
-                    className="w-full px-2.5 py-1.5 border border-neutral-300 rounded focus:border-neutral-900 focus:outline-none"
+                    onChange={(e) => {
+                      if (e.target.value === '__NEW__') {
+                        setShowInlineAddCategory(true);
+                      } else {
+                        setProductForm({ ...productForm, categoryId: e.target.value });
+                      }
+                    }}
+                    className="w-full px-2.5 py-1.5 border border-neutral-300 rounded focus:border-neutral-900 focus:outline-none text-xs bg-white"
                   >
-                    <option value="">None</option>
+                    <option value="">None / Uncategorized</option>
                     {categories.map((c) => (
                       <option key={c.id} value={c.id}>{c.name}</option>
                     ))}
+                    <option value="__NEW__" className="text-emerald-700 font-semibold bg-emerald-50">
+                      + Add New Category...
+                    </option>
                   </select>
+
+                  {/* Inline Custom Category Creator box */}
+                  {showInlineAddCategory && (
+                    <div className="mt-2 p-2.5 bg-emerald-50/90 border border-emerald-300 rounded text-xs space-y-2 animate-in fade-in">
+                      <div className="flex items-center justify-between font-semibold text-emerald-950 text-[11px]">
+                        <span className="flex items-center gap-1">
+                          <Tag className="w-3 h-3 text-emerald-700" />
+                          New Custom Category
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setShowInlineAddCategory(false)}
+                          className="text-neutral-400 hover:text-neutral-700 font-bold px-1"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                      <input
+                        type="text"
+                        value={inlineCatName}
+                        onChange={(e) => setInlineCatName(e.target.value)}
+                        placeholder="Category name (e.g. Spices & Masalas)"
+                        className="w-full px-2 py-1 bg-white border border-emerald-300 rounded text-xs focus:outline-none focus:border-emerald-600"
+                        autoFocus
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleCreateInlineCategory();
+                          }
+                        }}
+                      />
+                      <input
+                        type="text"
+                        value={inlineCatDesc}
+                        onChange={(e) => setInlineCatDesc(e.target.value)}
+                        placeholder="Description (optional)"
+                        className="w-full px-2 py-1 bg-white border border-emerald-300 rounded text-xs focus:outline-none focus:border-emerald-600"
+                      />
+                      <div className="flex items-center justify-between pt-1">
+                        <span className="text-[10px] text-emerald-800">Immediately selectable</span>
+                        <div className="flex gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setShowInlineAddCategory(false)}
+                            className="px-2 py-1 border border-neutral-300 bg-white rounded text-neutral-600 hover:bg-neutral-50 text-[11px]"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            disabled={inlineCatLoading || !inlineCatName.trim()}
+                            onClick={handleCreateInlineCategory}
+                            className="px-3 py-1 bg-emerald-700 text-white rounded font-medium text-[11px] hover:bg-emerald-800 disabled:opacity-50 cursor-pointer flex items-center gap-1"
+                          >
+                            {inlineCatLoading ? 'Adding...' : 'Save & Select'}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <div>
                   <label className="font-medium text-neutral-700 block mb-1">Unit</label>
@@ -1211,6 +1476,215 @@ export const InventoryManager: React.FC = () => {
           }}
           onClose={() => setScannerTarget(null)}
         />
+      )}
+
+      {/* Modal: Admin Product Deletion Confirmation */}
+      {productToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 overflow-y-auto animate-in fade-in duration-150">
+          <div className="bg-white rounded-lg border border-neutral-200 shadow-xl max-w-sm w-full p-5 space-y-3.5">
+            <div className="flex items-center gap-2 text-red-600">
+              <AlertTriangle className="w-5 h-5 shrink-0" />
+              <h3 className="font-semibold text-sm">Remove Item from Inventory</h3>
+            </div>
+            <p className="text-xs text-neutral-600 leading-relaxed">
+              Are you sure you want to permanently remove <strong className="text-neutral-900">"{productToDelete.name}"</strong> (SKU: {productToDelete.sku}) from your inventory?
+            </p>
+            <div className="text-[11px] text-red-700 bg-red-50 p-2.5 rounded border border-red-200">
+              ⚠️ <strong>Admin Permission Required:</strong> This action permanently deletes this product record from both the catalog and POS register.
+            </div>
+            <div className="flex justify-end gap-2 pt-2 border-t border-neutral-100">
+              <button
+                type="button"
+                disabled={modalSubmitting}
+                onClick={() => setProductToDelete(null)}
+                className="px-3 py-1.5 text-xs text-neutral-600 hover:text-neutral-900 font-medium cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={modalSubmitting}
+                onClick={handleDeleteProduct}
+                className="px-4 py-1.5 text-xs font-semibold bg-red-600 text-white rounded hover:bg-red-700 transition-colors disabled:opacity-50 cursor-pointer flex items-center gap-1 shadow-xs"
+              >
+                {modalSubmitting ? 'Removing...' : 'Confirm Remove'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Category Management */}
+      {showCategoryModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 overflow-y-auto animate-in fade-in duration-150">
+          <div className="bg-white rounded-lg border border-neutral-200 shadow-xl max-w-lg w-full p-5 space-y-4 max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between pb-2 border-b border-neutral-100">
+              <div className="flex items-center gap-2 text-neutral-900">
+                <Tag className="w-5 h-5 text-emerald-600" />
+                <h3 className="font-semibold text-sm">Product Categories</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCategoryModal(false)}
+                className="text-neutral-400 hover:text-neutral-700 font-bold px-1"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-xs text-neutral-500">
+              Organize inventory by product categories. Custom categories can be added anytime. Only Admins can delete categories.
+            </p>
+
+            {/* Quick Add Custom Category Form */}
+            <form onSubmit={handleCreateCategoryInModal} className="bg-neutral-50 p-3 rounded-lg border border-neutral-200 space-y-2.5">
+              <span className="text-[11px] font-semibold text-neutral-800 uppercase tracking-wider block">
+                + Add Custom Category
+              </span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <input
+                  type="text"
+                  required
+                  placeholder="Category Name *"
+                  value={newCatName}
+                  onChange={(e) => setNewCatName(e.target.value)}
+                  className="px-2.5 py-1.5 bg-white border border-neutral-300 rounded text-xs focus:outline-none focus:border-neutral-900"
+                />
+                <input
+                  type="text"
+                  placeholder="Description (optional)"
+                  value={newCatDesc}
+                  onChange={(e) => setNewCatDesc(e.target.value)}
+                  className="px-2.5 py-1.5 bg-white border border-neutral-300 rounded text-xs focus:outline-none focus:border-neutral-900"
+                />
+              </div>
+              <div className="flex justify-between items-center pt-1">
+                {isAdmin ? (
+                  <button
+                    type="button"
+                    onClick={handleSeedDefaults}
+                    disabled={isSeedingDefaults}
+                    className="text-[11px] text-emerald-700 hover:text-emerald-800 font-medium flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                    title="Load standard supermarket & retail categories"
+                  >
+                    <Sparkles className="w-3 h-3" />
+                    <span>{isSeedingDefaults ? 'Loading...' : 'Load Standard Categories'}</span>
+                  </button>
+                ) : <div />}
+                <button
+                  type="submit"
+                  disabled={catModalLoading || !newCatName.trim()}
+                  className="px-3 py-1.5 text-xs font-semibold bg-neutral-900 text-white rounded hover:bg-neutral-800 disabled:opacity-50 cursor-pointer flex items-center gap-1 shadow-xs ml-auto"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>{catModalLoading ? 'Adding...' : 'Add Category'}</span>
+                </button>
+              </div>
+            </form>
+
+            {/* Category List */}
+            <div className="flex-1 overflow-y-auto space-y-1.5 pr-1 max-h-64">
+              <span className="text-[11px] font-semibold text-neutral-700 block mb-1">
+                Existing Categories ({categories.length})
+              </span>
+              {categories.length === 0 ? (
+                <div className="p-6 text-center text-xs text-neutral-400 bg-neutral-50 rounded border border-neutral-100">
+                  No categories created yet. Click "Load Standard Categories" or add one above!
+                </div>
+              ) : (
+                categories.map((cat) => {
+                  const productCount = products.filter((p) => p.category_id === cat.id).length;
+                  return (
+                    <div
+                      key={cat.id}
+                      className="flex items-center justify-between p-2.5 bg-white hover:bg-neutral-50 border border-neutral-200 rounded text-xs transition-colors"
+                    >
+                      <div className="min-w-0 pr-2">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-neutral-900 truncate">{cat.name}</span>
+                          <span className="text-[10px] bg-neutral-100 text-neutral-600 px-1.5 py-0.5 rounded font-mono">
+                            {productCount} item{productCount !== 1 ? 's' : ''}
+                          </span>
+                        </div>
+                        {cat.description && (
+                          <p className="text-[11px] text-neutral-500 truncate mt-0.5">{cat.description}</p>
+                        )}
+                      </div>
+
+                      <div className="shrink-0 flex items-center gap-1">
+                        {isAdmin ? (
+                          <button
+                            type="button"
+                            onClick={() => setCategoryToDelete(cat)}
+                            className="p-1.5 text-neutral-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors cursor-pointer"
+                            title={`Remove category "${cat.name}" (Admin Only)`}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        ) : (
+                          <span
+                            className="text-[10px] text-neutral-400 flex items-center gap-0.5 px-1.5 py-0.5 bg-neutral-50 rounded border border-neutral-200"
+                            title="Only Admins can remove categories"
+                          >
+                            <Lock className="w-2.5 h-2.5" /> Admin only
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="flex justify-end pt-2 border-t border-neutral-100">
+              <button
+                type="button"
+                onClick={() => setShowCategoryModal(false)}
+                className="px-4 py-1.5 text-xs font-semibold bg-neutral-100 text-neutral-700 rounded hover:bg-neutral-200 transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Admin Category Deletion Confirmation */}
+      {categoryToDelete && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto animate-in fade-in duration-150">
+          <div className="bg-white rounded-lg border border-neutral-200 shadow-xl max-w-sm w-full p-5 space-y-3.5">
+            <div className="flex items-center gap-2 text-red-600">
+              <AlertTriangle className="w-5 h-5 shrink-0" />
+              <h3 className="font-semibold text-sm">Remove Category</h3>
+            </div>
+            <p className="text-xs text-neutral-600 leading-relaxed">
+              Are you sure you want to remove the category <strong className="text-neutral-900">"{categoryToDelete.name}"</strong>?
+            </p>
+            {products.filter((p) => p.category_id === categoryToDelete.id).length > 0 && (
+              <div className="text-[11px] text-amber-800 bg-amber-50 p-2.5 rounded border border-amber-200">
+                Notice: <strong>{products.filter((p) => p.category_id === categoryToDelete.id).length} product(s)</strong> currently tagged with this category will safely become <strong>Uncategorized</strong>. No products or stock will be lost.
+              </div>
+            )}
+            <div className="flex justify-end gap-2 pt-2 border-t border-neutral-100">
+              <button
+                type="button"
+                disabled={catModalLoading}
+                onClick={() => setCategoryToDelete(null)}
+                className="px-3 py-1.5 text-xs text-neutral-600 hover:text-neutral-900 font-medium cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={catModalLoading}
+                onClick={handleDeleteCategory}
+                className="px-4 py-1.5 text-xs font-semibold bg-red-600 text-white rounded hover:bg-red-700 transition-colors disabled:opacity-50 cursor-pointer flex items-center gap-1 shadow-xs"
+              >
+                {catModalLoading ? 'Removing...' : 'Confirm Remove'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

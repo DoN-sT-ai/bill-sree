@@ -219,10 +219,10 @@ export class AuthService {
         },
         store: store || {
           id: session.storeId,
-          name: 'LedgerStore Supermarket',
+          name: 'Jayam Stores',
           code: 'STORE-01',
           currency: 'INR',
-          invoice_prefix: 'INV-',
+          invoice_prefix: 'BILL-',
         },
         session,
       };
@@ -232,10 +232,10 @@ export class AuthService {
       user: safeUser(user),
       store: store || {
         id: session.storeId,
-        name: 'LedgerStore Supermarket',
+        name: 'Jayam Stores',
         code: 'STORE-01',
         currency: 'INR',
-        invoice_prefix: 'INV-',
+        invoice_prefix: 'BILL-',
       },
       session,
     };

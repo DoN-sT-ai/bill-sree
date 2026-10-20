@@ -132,6 +132,12 @@ class ApiClient {
     });
   }
 
+  async deleteProduct(id: string) {
+    return this.request<{ success: boolean; message: string }>(`/api/products/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
   // Categories
   async getCategories() {
     return this.request<Category[]>('/api/categories');
@@ -141,6 +147,18 @@ class ApiClient {
     return this.request<Category>('/api/categories', {
       method: 'POST',
       body: JSON.stringify(payload),
+    });
+  }
+
+  async deleteCategory(id: string) {
+    return this.request<{ success: boolean; message: string; affectedProductsCount: number }>(`/api/categories/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async seedDefaultCategories() {
+    return this.request<Category[]>('/api/categories/seed-defaults', {
+      method: 'POST',
     });
   }
 
@@ -222,6 +240,12 @@ class ApiClient {
     });
   }
 
+  async purgeAllSales() {
+    return this.request<{ success: boolean; message: string }>('/api/sales/purge-all', {
+      method: 'DELETE',
+    });
+  }
+
   // Employees
   async getEmployees() {
     return this.request<User[]>('/api/employees');
@@ -237,6 +261,12 @@ class ApiClient {
   async toggleEmployeeActive(id: string, activate: boolean) {
     return this.request<User>(`/api/employees/${id}/${activate ? 'activate' : 'deactivate'}`, {
       method: 'POST',
+    });
+  }
+
+  async deleteEmployee(id: string) {
+    return this.request<{ success: boolean; message: string }>(`/api/employees/${id}`, {
+      method: 'DELETE',
     });
   }
 

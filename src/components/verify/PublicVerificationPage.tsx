@@ -257,7 +257,7 @@ export const PublicVerificationPage: React.FC<PublicVerificationPageProps> = ({
         {/* Security badge */}
         <div className="text-center text-[10px] text-neutral-400 flex items-center justify-center gap-1">
           <ShieldCheck className="w-3.5 h-3.5 text-neutral-500" />
-          <span>LedgerStore Immutable Cryptographic Receipt Verification</span>
+          <span>Jayam Stores Immutable Cryptographic Receipt Verification</span>
         </div>
       </div>
     </div>

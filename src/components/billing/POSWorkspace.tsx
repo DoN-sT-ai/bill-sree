@@ -1,10 +1,13 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Product, CartItem, Sale } from '../../types';
 import { api } from '../../lib/api';
-import { formatCurrency } from '../../lib/utils';
-import { ReceiptModal } from './ReceiptModal';
+import { formatCurrency, formatBillNumber } from '../../lib/utils';
 import { CameraScannerModal } from './CameraScannerModal';
 import { findProductByCode, playScannerBeep } from '../../lib/barcodeUtils';
+import { useAuth } from '../../context/AuthContext';
+import { ThermalReceiptContent } from './ThermalReceiptContent';
+import { ReceiptModal } from './ReceiptModal';
+import { printReceipt } from '../../lib/printerService';
 import {
   Search,
   Barcode,
@@ -22,9 +25,18 @@ import {
   ArrowLeft,
   ArrowRight,
   ChevronLeft,
+  CheckCircle,
+  Receipt,
+  Printer,
+  Eye,
+  X,
 } from 'lucide-react';
 
-export const POSWorkspace: React.FC = () => {
+interface POSWorkspaceProps {
+  onNavigateToSales?: () => void;
+}
+
+export const POSWorkspace: React.FC<POSWorkspaceProps> = ({ onNavigateToSales }) => {
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Array<{ id: string; name: string }>>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -46,6 +58,8 @@ export const POSWorkspace: React.FC = () => {
   const [customerNotes, setCustomerNotes] = useState<string>('');
   const [cashTendered, setCashTendered] = useState<string>('');
 
+  const { store } = useAuth();
+
   // GST & Customer Details
   const [gstType, setGstType] = useState<'INTRA_STATE' | 'INTER_STATE' | 'EXEMPT'>('INTRA_STATE');
   const [showCustomerDetails, setShowCustomerDetails] = useState<boolean>(false);
@@ -53,12 +67,37 @@ export const POSWorkspace: React.FC = () => {
   const [customerPhone, setCustomerPhone] = useState<string>('');
   const [customerGstin, setCustomerGstin] = useState<string>('');
 
-  // Submission & Feedback
+  // Submission, Auto-Print & Feedback
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [completedSale, setCompletedSale] = useState<Sale | null>(null);
+  const [completedSaleForPrint, setCompletedSaleForPrint] = useState<Sale | null>(null);
+  const [activeModalSale, setActiveModalSale] = useState<Sale | null>(null);
+  const [autoPrintQr, setAutoPrintQr] = useState<string>('');
+  const [lastCompletedBill, setLastCompletedBill] = useState<{
+    billNumber: string;
+    total: number;
+    paymentMethod: string;
+  } | null>(null);
+
+  // Auto-Print Toggle (persisted in localStorage)
+  const [autoPrintEnabled, setAutoPrintEnabled] = useState<boolean>(() => {
+    return localStorage.getItem('pos_auto_print') === 'true';
+  });
+  const [showAllCatalog, setShowAllCatalog] = useState<boolean>(false);
 
   const barcodeInputRef = useRef<HTMLInputElement>(null);
+  const productsRef = useRef<Product[]>([]);
+  productsRef.current = products;
+  const cartRef = useRef<CartItem[]>([]);
+  cartRef.current = cart;
+
+  const toggleAutoPrint = () => {
+    setAutoPrintEnabled((prev) => {
+      const next = !prev;
+      localStorage.setItem('pos_auto_print', String(next));
+      return next;
+    });
+  };
 
   const loadCatalog = async () => {
     try {
@@ -80,17 +119,47 @@ export const POSWorkspace: React.FC = () => {
     loadCatalog();
   }, []);
 
-  // Filtered Products
-  const filteredProducts = products.filter((p) => {
-    if (selectedCategory !== 'all' && p.category_id !== selectedCategory) return false;
-    if (!searchQuery) return true;
-    const q = searchQuery.toLowerCase();
-    return (
-      p.name.toLowerCase().includes(q) ||
-      p.sku.toLowerCase().includes(q) ||
-      p.barcode.toLowerCase().includes(q)
-    );
-  });
+  // O(1) Cart product lookup map
+  const cartMap = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const item of cart) {
+      map.set(item.product.id, item.quantity);
+    }
+    return map;
+  }, [cart]);
+
+  // Precomputed category product counts (O(N) once rather than O(C * N) per render)
+  const categoryCountMap = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const p of products) {
+      if (p.category_id) {
+        counts.set(p.category_id, (counts.get(p.category_id) || 0) + 1);
+      }
+    }
+    return counts;
+  }, [products]);
+
+  // Memoized Filtered Products
+  const filteredProducts = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return products.filter((p) => {
+      if (selectedCategory !== 'all' && p.category_id !== selectedCategory) return false;
+      if (!q) return true;
+      return (
+        p.name.toLowerCase().includes(q) ||
+        p.sku.toLowerCase().includes(q) ||
+        p.barcode.toLowerCase().includes(q)
+      );
+    });
+  }, [products, selectedCategory, searchQuery]);
+
+  // Visible products in DOM — capped to 60 for initial load for instantaneous rendering
+  const visibleProducts = useMemo(() => {
+    if (searchQuery || selectedCategory !== 'all' || showAllCatalog) {
+      return filteredProducts;
+    }
+    return filteredProducts.slice(0, 60);
+  }, [filteredProducts, searchQuery, selectedCategory, showAllCatalog]);
 
   // Add product to cart
   const addToCart = (product: Product, quantityToAdd: number = 1) => {
@@ -221,6 +290,15 @@ export const POSWorkspace: React.FC = () => {
     let lastKeyTime = 0;
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl+Enter or Cmd+Enter: Quick complete bill keyboard shortcut
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        if (cartRef.current.length > 0) {
+          handleCompleteBill();
+        }
+        return;
+      }
+
       if (e.ctrlKey || e.altKey || e.metaKey) return;
 
       const target = e.target as HTMLElement;
@@ -259,7 +337,7 @@ export const POSWorkspace: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [products, cart]);
+  }, []);
 
   // Client calculations for real-time display taking into account sellingTaxMode and gstType
   let calculatedSubtotal = 0;
@@ -306,7 +384,18 @@ export const POSWorkspace: React.FC = () => {
   const cashNum = parseFloat(cashTendered) || 0;
   const changeDue = cashNum >= totalPayable ? cashNum - totalPayable : 0;
 
-  // Complete Bill Action
+  // Auto-Print bill using connected printer (Free-size automatically fits 80mm roll or full-page A4)
+  const triggerAutoPrint = (saleToPrint: Sale) => {
+    printReceipt({
+      sale: saleToPrint,
+      store,
+      format: 'free',
+      docType: 'BILL',
+      qrCodeDataUrl: autoPrintQr,
+    });
+  };
+
+  // Complete Bill Action — optimized for sub-second checkout
   const handleCompleteBill = async () => {
     if (cart.length === 0) {
       setErrorMessage('Please add at least one item to the cart.');
@@ -317,8 +406,9 @@ export const POSWorkspace: React.FC = () => {
       setIsSubmitting(true);
       setErrorMessage(null);
 
+      const currentCart = [...cart];
       const payload = {
-        items: cart.map((item) => ({
+        items: currentCart.map((item) => ({
           productId: item.product.id,
           quantity: item.quantity,
           taxType:
@@ -338,12 +428,49 @@ export const POSWorkspace: React.FC = () => {
 
       const sale = await api.createSale(payload);
 
-      // Open receipt modal
-      setCompletedSale(sale);
+      // Instant UI update: deduct stock locally in memory (0ms network delay)
+      setProducts((prev) =>
+        prev.map((p) => {
+          const match = currentCart.find((i) => i.product.id === p.id);
+          if (match) {
+            return { ...p, current_stock: Math.max(0, p.current_stock - match.quantity) };
+          }
+          return p;
+        })
+      );
+
+      // Save sale for printing & confirmation banner
+      setCompletedSaleForPrint(sale);
+      setLastCompletedBill({
+        billNumber: sale.bill_number,
+        total: sale.total,
+        paymentMethod: sale.payment_method,
+      });
+
+      // Reset checkout form immediately
       clearCart();
+      setCustomerName('');
+      setCustomerPhone('');
+      setCustomerGstin('');
+      setCustomerNotes('');
+      setCashTendered('');
+      setDiscount(0);
       setMobileTab('catalog');
-      // Reload inventory counts
-      loadCatalog();
+
+      // Generate verification QR code non-blockingly
+      const publicVerificationUrl = `${window.location.origin}/?verify=${sale.verification_token}`;
+      api.getQRCode(publicVerificationUrl)
+        .then(res => setAutoPrintQr(res.dataUrl))
+        .catch(() => {});
+
+      // Non-blocking print trigger if auto-print enabled
+      if (autoPrintEnabled) {
+        setTimeout(() => triggerAutoPrint(sale), 50);
+      }
+
+      setTimeout(() => {
+        barcodeInputRef.current?.focus();
+      }, 50);
     } catch (err: any) {
       setErrorMessage(err.message || 'Bill creation failed');
     } finally {
@@ -352,7 +479,64 @@ export const POSWorkspace: React.FC = () => {
   };
 
   return (
-    <div className="flex-1 flex flex-col lg:flex-row h-full min-h-0 overflow-y-auto lg:overflow-hidden bg-neutral-100">
+    <div className="flex-1 flex flex-col h-full min-h-0 bg-neutral-100 overflow-hidden">
+      {/* Instant Confirmation Banner on Billing Completion (With Auto-Print Feedback) */}
+      {lastCompletedBill && (
+        <div className="bg-emerald-600 text-white px-4 py-2.5 flex flex-wrap items-center justify-between text-xs shadow-sm shrink-0 gap-2 animate-in fade-in duration-200">
+          <div className="flex items-center gap-2">
+            <CheckCircle className="w-4 h-4 shrink-0 text-emerald-200" />
+            <span>
+              <strong>Bill #{formatBillNumber(lastCompletedBill.billNumber, 'BILL')}</strong> completed & sent to printer! Total:{' '}
+              <span className="font-bold font-mono">{formatCurrency(lastCompletedBill.total)}</span> ({lastCompletedBill.paymentMethod})
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            {completedSaleForPrint && (
+              <button
+                type="button"
+                onClick={() => triggerAutoPrint(completedSaleForPrint)}
+                className="px-2.5 py-1 bg-emerald-700 hover:bg-emerald-800 text-white rounded font-semibold text-[11px] transition cursor-pointer flex items-center gap-1 border border-emerald-500 shadow-xs"
+                title="Print 3-inch thermal bill again"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>Print Again (3")</span>
+              </button>
+            )}
+            {completedSaleForPrint && (
+              <button
+                type="button"
+                onClick={() => setActiveModalSale(completedSaleForPrint)}
+                className="px-2.5 py-1 bg-emerald-700 hover:bg-emerald-800 text-white rounded font-semibold text-[11px] transition cursor-pointer flex items-center gap-1 border border-emerald-500 shadow-xs"
+                title="View bill, download full-page PDF, or share WhatsApp"
+              >
+                <Eye className="w-3.5 h-3.5" />
+                <span>View / PDF</span>
+              </button>
+            )}
+            {onNavigateToSales && (
+              <button
+                type="button"
+                onClick={onNavigateToSales}
+                className="px-2.5 py-1 bg-white text-emerald-800 rounded font-semibold text-[11px] hover:bg-emerald-50 transition cursor-pointer flex items-center gap-1 shadow-xs"
+              >
+                <Receipt className="w-3.5 h-3.5" />
+                <span>Past Records</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setLastCompletedBill(null)}
+              className="p-1 hover:bg-emerald-700 rounded text-emerald-200 hover:text-white transition cursor-pointer"
+              title="Dismiss"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Main Split Layout: Catalog & Cart */}
+      <div className="flex-1 flex flex-col lg:flex-row min-h-0 overflow-y-auto lg:overflow-hidden">
       {/* LEFT SECTION: Product Catalog & Search */}
       <div className={`${mobileTab === 'cart' ? 'hidden lg:flex' : 'flex'} flex-1 flex flex-col min-w-0 border-r border-neutral-200 bg-white h-full min-h-0`}>
         {/* Top Control Bar: Search & Barcode */}
@@ -422,7 +606,7 @@ export const POSWorkspace: React.FC = () => {
               All Items ({products.length})
             </button>
             {categories.map((cat) => {
-              const count = products.filter((p) => p.category_id === cat.id).length;
+              const count = categoryCountMap.get(cat.id) || 0;
               return (
                 <button
                   key={cat.id}
@@ -450,8 +634,9 @@ export const POSWorkspace: React.FC = () => {
             </div>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 gap-2.5">
-              {filteredProducts.map((p) => {
-                const inCart = cart.find((i) => i.product.id === p.id);
+              {visibleProducts.map((p) => {
+                const cartQty = cartMap.get(p.id) || 0;
+                const inCart = cartQty > 0;
                 const isOutOfStock = p.current_stock <= 0;
                 const isLowStock = p.current_stock <= p.minimum_stock && !isOutOfStock;
 
@@ -475,7 +660,7 @@ export const POSWorkspace: React.FC = () => {
                         </span>
                         {inCart && (
                           <span className="shrink-0 bg-neutral-900 text-white text-[10px] font-mono px-1.5 py-0.2 rounded">
-                            {inCart.quantity} in cart
+                            {cartQty} in cart
                           </span>
                         )}
                       </div>
@@ -512,6 +697,17 @@ export const POSWorkspace: React.FC = () => {
                   </button>
                 );
               })}
+              {filteredProducts.length > 60 && !showAllCatalog && !searchQuery && selectedCategory === 'all' && (
+                <div className="col-span-full py-3 text-center">
+                  <button
+                    type="button"
+                    onClick={() => setShowAllCatalog(true)}
+                    className="px-4 py-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 text-xs font-semibold rounded transition cursor-pointer"
+                  >
+                    Load all remaining products ({filteredProducts.length - 60} more)
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -539,7 +735,7 @@ export const POSWorkspace: React.FC = () => {
       </div>
 
       {/* RIGHT SECTION: Cart & Checkout Workspace */}
-      <div className={`${mobileTab === 'catalog' ? 'hidden lg:flex' : 'flex'} w-full lg:w-[380px] xl:w-[420px] bg-white flex flex-col shrink-0 border-t lg:border-t-0 border-neutral-200 shadow-xs h-full min-h-0 overflow-y-auto lg:overflow-hidden`}>
+      <div className={`${mobileTab === 'catalog' ? 'hidden lg:flex' : 'flex'} w-full lg:w-[380px] xl:w-[420px] bg-white flex flex-col shrink-0 border-t lg:border-t-0 border-neutral-200 shadow-xs h-full min-h-0 overflow-y-auto`}>
         {/* Cart Header */}
         <div className="p-3 border-b border-neutral-200 bg-neutral-50 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2">
@@ -951,6 +1147,20 @@ export const POSWorkspace: React.FC = () => {
             />
           </div>
 
+          {/* Auto-Print option & keyboard helper */}
+          <div className="flex items-center justify-between px-1 text-[11px] text-neutral-600">
+            <label className="flex items-center gap-1.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={autoPrintEnabled}
+                onChange={toggleAutoPrint}
+                className="w-3.5 h-3.5 rounded accent-emerald-600 cursor-pointer"
+              />
+              <span>Auto-open print dialog</span>
+            </label>
+            <span className="text-[10px] text-neutral-400 font-mono">Ctrl+Enter</span>
+          </div>
+
           {/* Action Button: Complete Bill */}
           <button
             onClick={handleCompleteBill}
@@ -958,33 +1168,21 @@ export const POSWorkspace: React.FC = () => {
             className={`w-full py-3 rounded font-semibold text-sm flex items-center justify-center gap-2 transition-all ${
               cart.length === 0 || isSubmitting
                 ? 'bg-neutral-200 text-neutral-400 cursor-not-allowed'
-                : 'bg-emerald-600 text-white hover:bg-emerald-700 active:scale-[0.99] shadow-xs'
+                : 'bg-emerald-600 text-white hover:bg-emerald-700 active:scale-[0.99] shadow-xs cursor-pointer'
             }`}
           >
             {isSubmitting ? (
               <span>Processing Bill...</span>
             ) : (
               <>
-                <span>Complete Bill & Generate Receipt</span>
+                <span>Complete Bill</span>
                 <span className="font-mono tabular-nums">({formatCurrency(totalPayable)})</span>
               </>
             )}
           </button>
         </div>
       </div>
-
-      {/* Post-sale Receipt Modal */}
-      {completedSale && (
-        <ReceiptModal
-          sale={completedSale}
-          onClose={() => setCompletedSale(null)}
-          onNewBill={() => {
-            setCompletedSale(null);
-            clearCart();
-            barcodeInputRef.current?.focus();
-          }}
-        />
-      )}
+      </div>
 
       {/* Camera Barcode Scanner Modal */}
       {showCameraScanner && (
@@ -992,6 +1190,16 @@ export const POSWorkspace: React.FC = () => {
           products={products}
           onBarcodeDetected={handleCameraBarcodeDetect}
           onClose={() => setShowCameraScanner(false)}
+        />
+      )}
+
+      {/* Bill Preview Modal when user clicks "View / PDF" */}
+      {activeModalSale && (
+        <ReceiptModal
+          sale={activeModalSale}
+          onClose={() => setActiveModalSale(null)}
+          onNewBill={() => setActiveModalSale(null)}
+          autoPrint={false}
         />
       )}
     </div>

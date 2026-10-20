@@ -131,6 +131,32 @@ export class EmployeeService {
 
     return safeUser(user);
   }
+
+  static async deleteEmployee(storeId: string, adminUserId: string, adminUserName: string, employeeId: string) {
+    if (adminUserId === employeeId) {
+      throw new Error('You cannot delete your own admin account');
+    }
+
+    const user = db.users.find(u => u.id === employeeId && u.store_id === storeId);
+    if (!user) throw new Error('Staff member not found');
+
+    if (isSupabaseConfigured) {
+      await SupabaseDb.deleteUser(employeeId);
+    }
+
+    const idx = db.users.findIndex(u => u.id === employeeId && u.store_id === storeId);
+    if (idx !== -1) {
+      db.users.splice(idx, 1);
+    }
+
+    AuditService.log({
+      storeId, userId: adminUserId, userName: adminUserName,
+      action: 'USER_DELETED', entityType: 'USER', entityId: employeeId,
+      beforeData: { name: user.name, email: user.email, role: user.role },
+    });
+
+    return { success: true, message: `Staff member "${user.name}" removed` };
+  }
 }
 
 export class ExpenseService {

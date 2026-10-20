@@ -12,81 +12,49 @@
   }
 }
 
-/* Dedicated Thermal & Invoice Print Stylesheets */
+/* Dedicated Thermal, Free-size & Full Page Print Stylesheets */
 @media print {
-  /* Hide all dashboard chrome, navigation, headers, and background when printing receipt */
-  body * {
-    visibility: hidden;
-  }
-
-  #printable-receipt,
-  #printable-receipt * {
-    visibility: visible;
-  }
-
-  #printable-receipt {
-    position: absolute;
-    left: 0;
-    top: 0;
+  html, body {
     width: 100% !important;
-    max-width: 100% !important;
+    height: auto !important;
     margin: 0 !important;
     padding: 0 !important;
     background: #ffffff !important;
     color: #000000 !important;
+    overflow: visible !important;
+  }
+
+  /* Completely hide the application root, navigation, modals, and backdrops from print */
+  #root,
+  .no-print {
+    display: none !important;
+  }
+
+  /* Render ONLY the dedicated, isolated print portal directly under body */
+  #print-portal {
+    display: block !important;
+    position: static !important;
+    background: #ffffff !important;
+    color: #000000 !important;
     box-shadow: none !important;
     border: none !important;
+    margin: 0 auto !important;
+    padding: 0 !important;
     page-break-inside: avoid !important;
     break-inside: avoid !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
   }
 
-  #printable-receipt img {
+  #print-portal img {
     max-width: 100% !important;
     height: auto !important;
     object-fit: contain !important;
   }
 
-  .no-print {
-    display: none !important;
-  }
-
-  /* 58mm Thermal Receipt format */
-  body.print-format-58mm #printable-receipt {
-    width: 54mm !important;
-    max-width: 54mm !important;
-    font-size: 9.5px !important;
-    line-height: 1.15 !important;
-    padding: 1.5mm !important;
-  }
-
-  /* 80mm (3-Inch) Thermal Receipt format */
-  body.print-format-80mm #printable-receipt {
-    width: 74mm !important;
-    max-width: 74mm !important;
-    margin: 0 auto !important;
-    font-size: 10px !important;
-    line-height: 1.2 !important;
-    padding: 2mm !important;
-  }
-
-  body.print-format-80mm #printable-receipt *,
-  body.print-format-58mm #printable-receipt * {
-    color: #000000 !important;
-  }
-
-  /* A4 Standard Invoice format */
-  body.print-format-a4 #printable-receipt {
-    width: 195mm !important;
-    max-width: 195mm !important;
-    font-size: 12px !important;
-    line-height: 1.35 !important;
-    padding: 8mm !important;
-  }
-
   @page {
-    size: auto;
-    margin: 0mm;
+    size: 80mm auto;
+    margin: 1.5mm;
   }
 }
+

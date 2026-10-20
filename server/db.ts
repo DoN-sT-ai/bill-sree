@@ -264,9 +264,26 @@ class Database {
       const { supabase } = await import('./supabaseClient.ts');
       if (!supabase) return;
 
-      const { data: storesData } = await supabase.from('stores').select('*').limit(1);
+      const { data: storesData, error: storeErr } = await supabase.from('stores').select('*').limit(1);
+      if (storeErr) {
+        console.error('❌ Failed to fetch store from Supabase:', storeErr.message);
+      }
       if (!storesData || storesData.length === 0) {
-        console.warn('⚠️  No store found in Supabase. Please insert a store row first.');
+        console.warn('⚠️  No store returned from Supabase. Falling back to default Jayam Stores profile.');
+        this.cache.stores = [{
+          id: 'a0000000-0000-0000-0000-000000000001',
+          name: 'Jayam Stores',
+          code: 'STORE-01',
+          address: '123 Main Commercial Street',
+          phone: '+91 9876543210',
+          email: 'jayam@gmail.com',
+          gstin: '',
+          currency: 'INR',
+          timezone: 'Asia/Kolkata',
+          invoice_prefix: 'BILL',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }];
         return;
       }
       const storeId = storesData[0].id;
@@ -291,7 +308,13 @@ class Database {
       ]);
 
       this.cache.users = users;
-      this.cache.categories = categories;
+      if (categories.length === 0) {
+        const { DEFAULT_STORE_CATEGORIES } = await import('./services/productService.ts');
+        const seeded = await SupabaseDb.seedDefaultCategories(storeId, DEFAULT_STORE_CATEGORIES);
+        this.cache.categories = seeded.length > 0 ? seeded : [];
+      } else {
+        this.cache.categories = categories;
+      }
       this.cache.products = products;
       this.cache.stock_movements = stock_movements;
       this.cache.sales = sales;
@@ -330,54 +353,71 @@ class Database {
   get audit_logs() { return this.cache.audit_logs; }
   get bill_sequences() { return this.cache.bill_sequences; }
 
-  // Sequential bill number — uses Supabase bill_sequences table if configured
+  private sequenceCache: Map<string, number> = new Map();
+
+  // Sequential bill number — instant in-memory generation with non-blocking background sync
   public async getNextBillNumberAsync(storeId: string): Promise<string> {
     const store = this.cache.stores.find(s => s.id === storeId);
     if (!store) throw new Error('Store not found');
 
     const year = new Date().getFullYear();
+    const cleanPrefix = (store.invoice_prefix && store.invoice_prefix !== 'INV' && store.invoice_prefix !== 'INV-' ? store.invoice_prefix : 'BILL').replace(/-+$/, '');
+    const billPrefix = `${cleanPrefix}-${year}-`;
+    const seqKey = `${storeId}_${year}`;
 
-    if (isSupabaseConfigured) {
-      const { supabase } = await import('./supabaseClient.ts');
-      if (!supabase) throw new Error('Supabase client not available');
+    let next = this.sequenceCache.get(seqKey);
 
-      // Upsert bill sequence atomically
-      const { data, error } = await supabase.rpc('increment_bill_sequence', {
-        p_store_id: storeId,
-        p_year: year,
-      });
+    if (next === undefined) {
+      // First time initialization — find max number from existing sales and sequences
+      let maxFromSales = 0;
+      this.cache.sales
+        .filter(s => s.store_id === storeId && s.bill_number?.startsWith(billPrefix))
+        .forEach(s => {
+          const m = s.bill_number.match(/(\d+)$/);
+          if (m) {
+            const num = parseInt(m[1], 10);
+            if (!isNaN(num) && num > maxFromSales) maxFromSales = num;
+          }
+        });
 
-      if (error) {
-        // Fallback: manual upsert if RPC not set up
-        const { data: existing } = await supabase
-          .from('bill_sequences')
-          .select('last_number')
-          .eq('store_id', storeId)
-          .eq('year', year)
-          .maybeSingle();
-
-        const next = (existing?.last_number ?? 0) + 1;
-        await supabase
-          .from('bill_sequences')
-          .upsert({ store_id: storeId, year, last_number: next }, { onConflict: 'store_id,year' });
-
-        const formattedNum = String(next).padStart(6, '0');
-        return `${store.invoice_prefix || store.code || 'INV'}-${year}-${formattedNum}`;
+      if (isSupabaseConfigured) {
+        try {
+          const { supabase } = await import('./supabaseClient.ts');
+          if (supabase) {
+            const { data: existingSeq } = await supabase
+              .from('bill_sequences')
+              .select('last_number')
+              .eq('store_id', storeId)
+              .eq('year', year)
+              .maybeSingle();
+            const maxFromSeq = existingSeq?.last_number ?? 0;
+            maxFromSales = Math.max(maxFromSales, maxFromSeq);
+          }
+        } catch (_) {}
       }
 
-      const formattedNum = String(data).padStart(6, '0');
-      return `${store.invoice_prefix || store.code || 'INV'}-${year}-${formattedNum}`;
+      next = maxFromSales + 1;
+    } else {
+      next = next + 1;
     }
 
-    // Local fallback (no Supabase)
-    let seq = this.cache.bill_sequences.find(s => s.store_id === storeId && s.year === year);
-    if (!seq) {
-      seq = { store_id: storeId, year, last_number: 0 };
-      this.cache.bill_sequences.push(seq);
+    this.sequenceCache.set(seqKey, next);
+
+    // Sync sequence to Supabase in the background (fire-and-forget, non-blocking)
+    if (isSupabaseConfigured) {
+      import('./supabaseClient.ts').then(({ supabase }) => {
+        if (supabase) {
+          Promise.resolve(
+            supabase
+              .from('bill_sequences')
+              .upsert({ store_id: storeId, year, last_number: next }, { onConflict: 'store_id,year' })
+          ).catch(() => {});
+        }
+      }).catch(() => {});
     }
-    seq.last_number += 1;
-    const formattedNum = String(seq.last_number).padStart(6, '0');
-    return `${store.invoice_prefix || store.code || 'INV'}-${year}-${formattedNum}`;
+
+    const formattedNum = String(next).padStart(6, '0');
+    return `${billPrefix}${formattedNum}`;
   }
 
   // Sync-compatible wrapper (for services not yet async)
@@ -392,7 +432,8 @@ class Database {
     }
     seq.last_number += 1;
     const formattedNum = String(seq.last_number).padStart(6, '0');
-    return `${store.invoice_prefix || store.code || 'INV'}-${year}-${formattedNum}`;
+    const pfx = (store.invoice_prefix && store.invoice_prefix !== 'INV' && store.invoice_prefix !== 'INV-' ? store.invoice_prefix : 'BILL').replace(/-+$/, '');
+    return `${pfx}-${year}-${formattedNum}`;
   }
 }
 

@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { supabase, isSupabaseConfigured } from './supabaseClient.ts';
-import {
+import type {
   Store,
   User,
   Category,
@@ -117,6 +117,16 @@ export class SupabaseDb {
     return data as User;
   }
 
+  static async deleteUser(userId: string): Promise<boolean> {
+    if (!supabase) throw new Error('Supabase client not initialized');
+    const { error } = await supabase.from('users').delete().eq('id', userId);
+    if (error) {
+      console.error('Supabase deleteUser error:', error);
+      throw new Error(error.message);
+    }
+    return true;
+  }
+
   // CATEGORIES
   static async getCategories(storeId: string): Promise<Category[]> {
     if (!supabase) return [];
@@ -146,6 +156,55 @@ export class SupabaseDb {
       .single();
     if (error) throw new Error(error.message);
     return data as Category;
+  }
+
+  static async deleteCategory(storeId: string, categoryId: string): Promise<boolean> {
+    if (!supabase) return false;
+    // Detach from any products first to preserve product integrity
+    const { error: updateErr } = await supabase
+      .from('products')
+      .update({ category_id: null, updated_at: new Date().toISOString() })
+      .eq('store_id', storeId)
+      .eq('category_id', categoryId);
+    if (updateErr) {
+      console.warn('Supabase detach category from products warning:', updateErr.message);
+    }
+
+    const { error } = await supabase
+      .from('categories')
+      .delete()
+      .eq('store_id', storeId)
+      .eq('id', categoryId);
+    if (error) {
+      console.error('Supabase deleteCategory error:', error);
+      throw new Error(error.message);
+    }
+    return true;
+  }
+
+  static async seedDefaultCategories(storeId: string, defaults: Array<{ name: string; description: string }>): Promise<Category[]> {
+    if (!supabase) return [];
+    const now = new Date().toISOString();
+    const rows = defaults.map(d => ({
+      id: crypto.randomUUID(),
+      store_id: storeId,
+      name: d.name,
+      description: d.description || '',
+      active: true,
+      created_at: now,
+      updated_at: now,
+    }));
+
+    const { data, error } = await supabase
+      .from('categories')
+      .insert(rows)
+      .select();
+
+    if (error) {
+      console.error('Supabase seedDefaultCategories error:', error);
+      return [];
+    }
+    return (data || []) as Category[];
   }
 
   // PRODUCTS
@@ -182,14 +241,28 @@ export class SupabaseDb {
 
   static async updateProduct(productId: string, updates: Partial<Product>): Promise<Product> {
     if (!supabase) throw new Error('Supabase client not initialized');
+    const cleanUpdates: any = { ...updates, updated_at: new Date().toISOString() };
+    if ('category_id' in cleanUpdates) {
+      cleanUpdates.category_id = nullableUuid(cleanUpdates.category_id);
+    }
     const { data, error } = await supabase
       .from('products')
-      .update({ ...updates, updated_at: new Date().toISOString() })
+      .update(cleanUpdates)
       .eq('id', productId)
       .select()
       .single();
     if (error) throw new Error(error.message);
     return data as Product;
+  }
+
+  static async deleteProduct(productId: string): Promise<boolean> {
+    if (!supabase) throw new Error('Supabase client not initialized');
+    const { error } = await supabase.from('products').delete().eq('id', productId);
+    if (error) {
+      console.error('Supabase deleteProduct error:', error);
+      throw new Error(error.message);
+    }
+    return true;
   }
 
   // STOCK MOVEMENTS
@@ -223,6 +296,20 @@ export class SupabaseDb {
       .single();
     if (error) throw new Error(error.message);
     return data as StockMovement;
+  }
+
+  static async createStockMovementsBatch(movements: Array<Omit<StockMovement, 'id' | 'created_at'>>): Promise<void> {
+    if (!supabase || movements.length === 0) return;
+    const now = new Date().toISOString();
+    const rows = movements.map(m => ({
+      ...m,
+      id: crypto.randomUUID(),
+      user_id: nullableUuid(m.user_id),
+      reference_id: nullableUuid(m.reference_id),
+      created_at: now,
+    }));
+    const { error } = await supabase.from('stock_movements').insert(rows);
+    if (error) console.error('Supabase createStockMovementsBatch error:', error);
   }
 
   // SALES

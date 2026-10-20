@@ -31,11 +31,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onOpenVerify }) => {
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
         <div className="flex justify-center mb-2">
           <div className="w-10 h-10 rounded-md bg-neutral-900 text-white flex items-center justify-center font-bold text-lg">
-            L
+            J
           </div>
         </div>
         <h2 className="text-center text-xl font-bold tracking-tight text-neutral-900">
-          LedgerStore Portal
+          Jayam Stores Portal
         </h2>
         <p className="mt-1 text-center text-xs text-neutral-500">
           Point of Sale, Real-time Stock Ledger & Bill Verification

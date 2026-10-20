@@ -3,7 +3,7 @@ import { User } from '../../types';
 import { api } from '../../lib/api';
 import { formatDateTime } from '../../lib/utils';
 import { useAuth } from '../../context/AuthContext';
-import { Users, UserPlus, CheckCircle, XCircle, Shield, Briefcase, RefreshCw } from 'lucide-react';
+import { Users, UserPlus, CheckCircle, XCircle, Shield, Briefcase, RefreshCw, Trash2, AlertTriangle } from 'lucide-react';
 
 export const EmployeeManager: React.FC = () => {
   const { user: currentAdmin } = useAuth();
@@ -13,6 +13,7 @@ export const EmployeeManager: React.FC = () => {
   const [formSubmitting, setFormSubmitting] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [employeeToDelete, setEmployeeToDelete] = useState<User | null>(null);
 
   const [newEmployeeForm, setNewEmployeeForm] = useState({
     name: '',
@@ -63,6 +64,22 @@ export const EmployeeManager: React.FC = () => {
       await loadEmployees();
     } catch (err: any) {
       setErrorMsg(err.message || 'Action failed');
+    }
+  };
+
+  const handleDeleteEmployee = async () => {
+    if (!employeeToDelete) return;
+    try {
+      setFormSubmitting(true);
+      setErrorMsg(null);
+      await api.deleteEmployee(employeeToDelete.id);
+      setSuccessMsg(`Staff member "${employeeToDelete.name}" permanently removed`);
+      setEmployeeToDelete(null);
+      await loadEmployees();
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to remove staff member');
+    } finally {
+      setFormSubmitting(false);
     }
   };
 
@@ -167,18 +184,27 @@ export const EmployeeManager: React.FC = () => {
                           </span>
                         )}
                       </td>
-                      <td className="py-2.5 px-3 text-right">
+                      <td className="py-2.5 px-3 text-right space-x-1.5">
                         {!isCurrent && (
-                          <button
-                            onClick={() => handleToggleActive(emp)}
-                            className={`px-2 py-1 rounded text-[11px] font-medium transition-colors ${
-                              emp.active
-                                ? 'bg-red-50 text-red-700 hover:bg-red-100'
-                                : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-                            }`}
-                          >
-                            {emp.active ? 'Deactivate' : 'Activate'}
-                          </button>
+                          <div className="inline-flex items-center gap-1.5">
+                            <button
+                              onClick={() => handleToggleActive(emp)}
+                              className={`px-2 py-1 rounded text-[11px] font-medium transition-colors cursor-pointer ${
+                                emp.active
+                                  ? 'bg-red-50 text-red-700 hover:bg-red-100'
+                                  : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                              }`}
+                            >
+                              {emp.active ? 'Deactivate' : 'Activate'}
+                            </button>
+                            <button
+                              onClick={() => setEmployeeToDelete(emp)}
+                              className="p-1 text-neutral-400 hover:text-red-600 rounded hover:bg-red-50 transition-colors inline-flex cursor-pointer"
+                              title="Permanently remove staff member (Admin only)"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         )}
                       </td>
                     </tr>
@@ -267,6 +293,42 @@ export const EmployeeManager: React.FC = () => {
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* Modal: Admin Employee Deletion Confirmation */}
+      {employeeToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 overflow-y-auto animate-in fade-in duration-150">
+          <div className="bg-white rounded-lg border border-neutral-200 shadow-xl max-w-sm w-full p-5 space-y-3.5">
+            <div className="flex items-center gap-2 text-red-600">
+              <AlertTriangle className="w-5 h-5 shrink-0" />
+              <h3 className="font-semibold text-sm">Remove User Account</h3>
+            </div>
+            <p className="text-xs text-neutral-600 leading-relaxed">
+              Are you sure you want to permanently delete the login account for <strong className="text-neutral-900">"{employeeToDelete.name}"</strong> ({employeeToDelete.email})?
+            </p>
+            <div className="text-[11px] text-red-700 bg-red-50 p-2.5 rounded border border-red-200">
+              ⚠️ <strong>Admin Action:</strong> This staff member will immediately lose all login access to POS and inventory.
+            </div>
+            <div className="flex justify-end gap-2 pt-2 border-t border-neutral-100">
+              <button
+                type="button"
+                disabled={formSubmitting}
+                onClick={() => setEmployeeToDelete(null)}
+                className="px-3 py-1.5 text-xs text-neutral-600 hover:text-neutral-900 font-medium cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={formSubmitting}
+                onClick={handleDeleteEmployee}
+                className="px-4 py-1.5 text-xs font-semibold bg-red-600 text-white rounded hover:bg-red-700 transition-colors disabled:opacity-50 cursor-pointer flex items-center gap-1 shadow-xs"
+              >
+                {formSubmitting ? 'Deleting...' : 'Confirm Remove'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

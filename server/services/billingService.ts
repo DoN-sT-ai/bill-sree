@@ -219,28 +219,40 @@ export class BillingService {
 
     // 6. Persist to Supabase (primary) or local cache
     if (isSupabaseConfigured) {
-      const { supabase } = await import('../supabaseClient.ts');
-      if (supabase) {
-        // Update product stock in Supabase
-        await Promise.all(
-          verifiedProducts.map(vp =>
-            SupabaseDb.updateProduct(vp.product.id, {
-              current_stock: vp.product.current_stock,
-              updated_at: now,
-            }).catch(() => {})
-          )
-        );
+      let saved: Sale;
+      try {
+        const [saleResult] = await Promise.all([
+          SupabaseDb.createSale(
+            { ...newSale, items: undefined } as any,
+            saleItems.map(({ id, sale_id, created_at, ...rest }) => rest)
+          ),
+          SupabaseDb.createStockMovementsBatch(stockMovements).catch(err => {
+            console.error('Stock movements batch error:', err);
+          }),
+          Promise.all(
+            verifiedProducts.map(vp =>
+              SupabaseDb.updateProduct(vp.product.id, {
+                current_stock: vp.product.current_stock,
+                updated_at: now,
+              }).catch(() => {})
+            )
+          ),
+        ]);
+        saved = saleResult;
+      } catch (insertErr: any) {
+        const msg = String(insertErr?.message || '');
+        if (msg.includes('sales_bill_number_key') || msg.includes('unique constraint') || msg.includes('duplicate key')) {
+          console.warn('Bill number collision detected, generating next sequence and retrying...');
+          const retryBillNumber = await db.getNextBillNumberAsync(storeId);
+          newSale.bill_number = retryBillNumber;
+          saved = await SupabaseDb.createSale(
+            { ...newSale, items: undefined } as any,
+            saleItems.map(({ id, sale_id, created_at, ...rest }) => rest)
+          );
+        } else {
+          throw insertErr;
+        }
       }
-
-      const saved = await SupabaseDb.createSale(
-        { ...newSale, items: undefined } as any,
-        saleItems.map(({ id, sale_id, created_at, ...rest }) => rest)
-      );
-
-      // Create stock movements in Supabase
-      await Promise.all(
-        stockMovements.map(m => SupabaseDb.createStockMovement(m).catch(() => {}))
-      );
 
       // Update local cache
       db.sales.unshift(saved);

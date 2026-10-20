@@ -20,14 +20,14 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onSelectTab, onOpenV
           className="flex items-center gap-2.5 text-left focus:outline-none"
         >
           <div className="w-7 h-7 rounded bg-neutral-900 text-white flex items-center justify-center font-bold text-sm tracking-tight">
-            L
+            {store?.name?.slice(0, 1).toUpperCase() || 'J'}
           </div>
           <div>
             <div className="text-sm font-semibold text-neutral-900 tracking-tight leading-none">
-              {store?.name || 'LedgerStore'}
+              {store?.name || 'Jayam Stores'}
             </div>
             <div className="text-[11px] text-neutral-500 font-mono tracking-wider mt-0.5">
-              CODE: {store?.code || 'APX'}
+              CODE: {store?.code || 'JYM'}
             </div>
           </div>
         </button>

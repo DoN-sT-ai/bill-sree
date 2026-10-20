@@ -43,7 +43,7 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
   if (req.url && req.url.startsWith('/api/index.js')) {
     req.url = req.url.replace('/api/index.js', '/api');
   }
-  if (req.url && !req.url.startsWith('/api') && !req.url.startsWith('/assets') && !req.url.includes('.')) {
+  if (process.env.VERCEL && req.url && !req.url.startsWith('/api') && !req.url.startsWith('/@') && !req.url.startsWith('/src') && !req.url.startsWith('/node_modules') && !req.url.includes('.')) {
     req.url = '/api' + (req.url.startsWith('/') ? req.url : '/' + req.url);
   }
   next();
@@ -249,17 +249,62 @@ app.post('/api/products/:id/deactivate', requireAuth, requireAdmin, async (req: 
   }
 });
 
-app.get('/api/categories', requireAuth, (req: AuthenticatedRequest, res: Response) => {
-  const categories = CategoryService.listCategories(req.user!.store_id);
-  res.json(categories);
+// Admin-only: Permanently delete/remove product from inventory
+app.delete('/api/products/:id', requireAuth, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const result = await ProductService.deleteProduct(req.user!.store_id, req.user!.id, req.user!.name, req.params.id);
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: { message: err.message } });
+  }
+});
+
+app.get('/api/categories', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const categories = await CategoryService.listCategories(req.user!.store_id);
+    res.json(categories);
+  } catch (err: any) {
+    res.status(500).json({ error: { message: err.message } });
+  }
 });
 
 app.post('/api/categories', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { name, description } = req.body;
-    if (!name) return res.status(400).json({ error: { message: 'Category name is required' } });
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({ error: { message: 'Category name is required' } });
+    }
     const cat = await CategoryService.createCategory(req.user!.store_id, req.user!.id, req.user!.name, name, description);
     res.status(201).json(cat);
+  } catch (err: any) {
+    res.status(400).json({ error: { message: err.message } });
+  }
+});
+
+// Admin-only: Remove / delete category
+app.delete('/api/categories/:id', requireAuth, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const result = await CategoryService.deleteCategory(
+      req.user!.store_id,
+      req.user!.id,
+      req.user!.name,
+      req.params.id
+    );
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: { message: err.message } });
+  }
+});
+
+// Admin-only: Seed/restore standard default store categories
+app.post('/api/categories/seed-defaults', requireAuth, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const seeded = await CategoryService.seedDefaultCategories(
+      req.user!.store_id,
+      req.user!.id,
+      req.user!.name
+    );
+    res.json(seeded);
   } catch (err: any) {
     res.status(400).json({ error: { message: err.message } });
   }
@@ -388,6 +433,39 @@ app.post('/api/sales/:id/void', requireAuth, requireAdmin, async (req: Authentic
   }
 });
 
+// Admin-only: Purge all sales and reset sequences
+app.delete('/api/sales/purge-all', requireAuth, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const storeId = req.user!.store_id;
+    if (isSupabaseConfigured) {
+      const { supabase } = await import('./supabaseClient.ts');
+      if (supabase) {
+        await supabase.from('sale_items').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+        await supabase.from('sales').delete().eq('store_id', storeId);
+        await supabase.from('bill_sequences').update({ last_number: 0 }).eq('store_id', storeId);
+      }
+    }
+    db.sales.length = 0;
+    db.sale_items.length = 0;
+    const seq = db.bill_sequences.find(s => s.store_id === storeId);
+    if (seq) seq.last_number = 0;
+
+    AuditService.log({
+      storeId,
+      userId: req.user!.id,
+      userName: req.user!.name,
+      action: 'SALES_PURGED',
+      entityType: 'STORE',
+      entityId: storeId,
+      afterData: { message: 'All sales purged and bill sequences reset to 0' },
+    });
+
+    res.json({ success: true, message: 'All old billings removed and sequences reset to 0' });
+  } catch (err: any) {
+    res.status(500).json({ error: { message: err.message } });
+  }
+});
+
 // ==========================================
 // EMPLOYEE MANAGEMENT (ADMIN ONLY)
 // ==========================================
@@ -436,6 +514,21 @@ app.post('/api/employees/:id/deactivate', requireAuth, requireAdmin, async (req:
       false
     );
     res.json(emp);
+  } catch (err: any) {
+    res.status(400).json({ error: { message: err.message } });
+  }
+});
+
+// Admin-only: Permanently delete staff/user account
+app.delete('/api/employees/:id', requireAuth, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const result = await EmployeeService.deleteEmployee(
+      req.user!.store_id,
+      req.user!.id,
+      req.user!.name,
+      req.params.id
+    );
+    res.json(result);
   } catch (err: any) {
     res.status(400).json({ error: { message: err.message } });
   }
@@ -569,7 +662,7 @@ app.patch('/api/settings', requireAuth, requireAdmin, async (req: AuthenticatedR
 
     // Persist to Supabase
     if (isSupabaseConfigured) {
-      const { SupabaseDb } = await import('./server/supabaseDb.ts');
+      const { SupabaseDb } = await import('./supabaseDb.ts');
       await SupabaseDb.updateStore(store.id, store).catch(() => {});
     }
 

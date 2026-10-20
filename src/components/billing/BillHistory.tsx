@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Sale } from '../../types';
 import { api } from '../../lib/api';
-import { formatCurrency, formatDateTime } from '../../lib/utils';
+import { formatCurrency, formatDateTime, formatBillNumber } from '../../lib/utils';
 import { useAuth } from '../../context/AuthContext';
 import { ReceiptModal } from './ReceiptModal';
 import {
@@ -14,6 +14,7 @@ import {
   CheckCircle,
   XCircle,
   FileSpreadsheet,
+  Trash2,
 } from 'lucide-react';
 
 export const BillHistory: React.FC = () => {
@@ -29,6 +30,8 @@ export const BillHistory: React.FC = () => {
   const [saleToVoid, setSaleToVoid] = useState<Sale | null>(null);
   const [voidReason, setVoidReason] = useState<string>('');
   const [isVoiding, setIsVoiding] = useState<boolean>(false);
+  const [showPurgeModal, setShowPurgeModal] = useState<boolean>(false);
+  const [isPurging, setIsPurging] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const loadSales = async () => {
@@ -78,6 +81,20 @@ export const BillHistory: React.FC = () => {
     }
   };
 
+  const handleConfirmPurge = async () => {
+    try {
+      setIsPurging(true);
+      setErrorMsg(null);
+      await api.purgeAllSales();
+      setShowPurgeModal(false);
+      await loadSales();
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to clear all sales');
+    } finally {
+      setIsPurging(false);
+    }
+  };
+
   return (
     <div className="flex-1 flex flex-col h-full min-h-0 bg-neutral-50 overflow-y-auto md:overflow-hidden">
       {/* Top Header & Filters */}
@@ -91,8 +108,20 @@ export const BillHistory: React.FC = () => {
               Search and audit bills issued across all cashier shifts.
             </p>
           </div>
-          <div className="text-xs text-neutral-500 font-mono">
-            Total Records: {sales.length}
+          <div className="flex items-center gap-2">
+            <div className="text-xs text-neutral-500 font-mono">
+              Total Records: {sales.length}
+            </div>
+            {isAdmin && sales.length > 0 && (
+              <button
+                onClick={() => setShowPurgeModal(true)}
+                className="px-2.5 py-1 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                title="Permanently remove all old bills (Admin Only)"
+              >
+                <Trash2 className="w-3 h-3" />
+                Clear All Bills
+              </button>
+            )}
           </div>
         </div>
 
@@ -192,7 +221,7 @@ export const BillHistory: React.FC = () => {
                       }`}
                     >
                       <td className="py-2.5 px-3 font-mono font-medium text-neutral-900">
-                        <div>{sale.bill_number}</div>
+                        <div>{formatBillNumber(sale.bill_number, 'BILL')}</div>
                         {sale.customer_name && (
                           <div className="text-[10px] text-neutral-500 font-sans truncate max-w-[120px]">
                             {sale.customer_name} {sale.customer_gstin ? '· GST' : ''}
@@ -318,6 +347,42 @@ export const BillHistory: React.FC = () => {
                 className="px-4 py-1.5 text-xs font-semibold bg-red-600 text-white rounded hover:bg-red-700 transition-colors disabled:opacity-50"
               >
                 {isVoiding ? 'Restoring Stock...' : 'Confirm Void & Restore Stock'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Admin Purge All Sales Modal */}
+      {showPurgeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 overflow-y-auto animate-in fade-in duration-150">
+          <div className="bg-white rounded-lg border border-neutral-200 shadow-xl max-w-md w-full p-5 space-y-4">
+            <div className="flex items-center gap-2 text-red-600">
+              <AlertTriangle className="w-5 h-5 shrink-0" />
+              <h3 className="font-semibold text-sm">Clear All Billing History</h3>
+            </div>
+            <p className="text-xs text-neutral-600 leading-relaxed">
+              Are you sure you want to permanently clear all <strong className="text-neutral-900">{sales.length} bills</strong> and reset invoice sequence numbers back to 0?
+            </p>
+            <div className="text-[11px] text-red-700 bg-red-50 p-2.5 rounded border border-red-200">
+              ⚠️ <strong>Admin Action:</strong> This action permanently deletes all sales transactions and itemized receipts. This cannot be undone.
+            </div>
+            <div className="flex justify-end gap-2 pt-2 border-t border-neutral-100">
+              <button
+                type="button"
+                disabled={isPurging}
+                onClick={() => setShowPurgeModal(false)}
+                className="px-3 py-1.5 text-xs text-neutral-600 hover:text-neutral-900 font-medium cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isPurging}
+                onClick={handleConfirmPurge}
+                className="px-4 py-1.5 text-xs font-semibold bg-red-600 text-white rounded hover:bg-red-700 transition-colors disabled:opacity-50 cursor-pointer flex items-center gap-1 shadow-xs"
+              >
+                {isPurging ? 'Clearing...' : 'Confirm Clear All'}
               </button>
             </div>
           </div>

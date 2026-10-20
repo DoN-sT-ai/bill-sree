@@ -226,10 +226,91 @@ export class ProductService {
     });
     return product;
   }
+
+  static async deleteProduct(storeId: string, userId: string, userName: string, productId: string) {
+    const product = this.getProduct(storeId, productId);
+    if (isSupabaseConfigured) {
+      await SupabaseDb.deleteProduct(productId);
+    }
+    const idx = db.products.findIndex(p => p.id === productId && p.store_id === storeId);
+    if (idx !== -1) {
+      db.products.splice(idx, 1);
+    }
+    AuditService.log({
+      storeId, userId, userName,
+      action: 'PRODUCT_DELETED',
+      entityType: 'PRODUCT', entityId: productId,
+      beforeData: { name: product.name, sku: product.sku, barcode: product.barcode },
+    });
+    return { success: true, message: `Product "${product.name}" deleted` };
+  }
 }
 
+export const DEFAULT_STORE_CATEGORIES = [
+  { name: 'Groceries & Staples', description: 'Rice, dal, flour, cooking oils, spices, and grains' },
+  { name: 'Snacks & Packaged Food', description: 'Biscuits, chips, noodles, namkeen, and sweets' },
+  { name: 'Beverages & Drinks', description: 'Tea, coffee, soft drinks, juices, and mineral water' },
+  { name: 'Dairy & Bakery', description: 'Milk, curd, butter, paneer, and fresh bread' },
+  { name: 'Personal Care & Hygiene', description: 'Soaps, shampoos, toothpaste, and hygiene products' },
+  { name: 'Household & Cleaning', description: 'Detergents, floor cleaners, dishwash, and cleaning supplies' },
+  { name: 'Stationery & General', description: 'Notebooks, pens, batteries, and general utility items' },
+];
+
 export class CategoryService {
-  static listCategories(storeId: string) {
+  static async listCategories(storeId: string): Promise<Category[]> {
+    let cats = db.categories.filter(c => c.store_id === storeId && c.active);
+    if (cats.length === 0) {
+      cats = await CategoryService.seedDefaultCategories(storeId);
+    }
+    return cats;
+  }
+
+  static async seedDefaultCategories(storeId: string, userId?: string, userName?: string): Promise<Category[]> {
+    const existingNames = new Set(
+      db.categories.filter(c => c.store_id === storeId).map(c => c.name.toLowerCase().trim())
+    );
+
+    const toAdd = DEFAULT_STORE_CATEGORIES.filter(d => !existingNames.has(d.name.toLowerCase().trim()));
+    if (toAdd.length === 0) {
+      return db.categories.filter(c => c.store_id === storeId && c.active);
+    }
+
+    if (isSupabaseConfigured) {
+      const saved = await SupabaseDb.seedDefaultCategories(storeId, toAdd);
+      if (saved && saved.length > 0) {
+        db.categories.push(...saved);
+        if (userId && userName) {
+          AuditService.log({
+            storeId, userId, userName,
+            action: 'CATEGORIES_SEEDED',
+            entityType: 'CATEGORY',
+            afterData: { count: saved.length },
+          });
+        }
+        return db.categories.filter(c => c.store_id === storeId && c.active);
+      }
+    }
+
+    const now = new Date().toISOString();
+    const created: Category[] = toAdd.map(d => ({
+      id: crypto.randomUUID(),
+      store_id: storeId,
+      name: d.name,
+      description: d.description,
+      active: true,
+      created_at: now,
+      updated_at: now,
+    }));
+
+    db.categories.push(...created);
+    if (userId && userName) {
+      AuditService.log({
+        storeId, userId, userName,
+        action: 'CATEGORIES_SEEDED',
+        entityType: 'CATEGORY',
+        afterData: { count: created.length },
+      });
+    }
     return db.categories.filter(c => c.store_id === storeId && c.active);
   }
 
@@ -269,5 +350,46 @@ export class CategoryService {
       afterData: { name: cat.name },
     });
     return cat;
+  }
+
+  static async deleteCategory(storeId: string, userId: string, userName: string, categoryId: string) {
+    const catIndex = db.categories.findIndex(c => c.store_id === storeId && c.id === categoryId);
+    if (catIndex === -1) {
+      throw new Error('Category not found');
+    }
+    const cat = db.categories[catIndex];
+
+    // Detach from all products in memory
+    let affectedProductsCount = 0;
+    db.products.forEach(p => {
+      if (p.store_id === storeId && p.category_id === categoryId) {
+        p.category_id = undefined;
+        p.updated_at = new Date().toISOString();
+        affectedProductsCount++;
+      }
+    });
+
+    if (isSupabaseConfigured) {
+      await SupabaseDb.deleteCategory(storeId, categoryId);
+    }
+
+    // Remove from in-memory cache
+    db.categories.splice(catIndex, 1);
+
+    AuditService.log({
+      storeId,
+      userId,
+      userName,
+      action: 'CATEGORY_DELETED',
+      entityType: 'CATEGORY',
+      entityId: categoryId,
+      beforeData: { name: cat.name, description: cat.description, affectedProductsCount },
+    });
+
+    return {
+      success: true,
+      message: `Category "${cat.name}" removed successfully`,
+      affectedProductsCount,
+    };
   }
 }

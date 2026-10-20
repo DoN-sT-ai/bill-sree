@@ -282,14 +282,14 @@ CREATE POLICY "anon_bill_sequences_policy" ON public.bill_sequences FOR ALL TO a
 INSERT INTO public.stores (id, name, code, address, phone, email, currency, timezone, invoice_prefix)
 VALUES (
   'a0000000-0000-0000-0000-000000000001',
-  'LedgerStore Supermarket',
+  'Jayam Stores',
   'STORE-01',
   '123 Main Commercial Street',
   '+91 9876543210',
   'admin@gmail.com',
   'INR',
   'Asia/Kolkata',
-  'INV-'
+  'INV'
 )
 ON CONFLICT (code) DO NOTHING;
 
