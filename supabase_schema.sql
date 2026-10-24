@@ -277,7 +277,7 @@ CREATE POLICY "anon_bill_sequences_policy" ON public.bill_sequences FOR ALL TO a
 
 -- ============================================================================
 -- 16. SEED STORE AND ADMIN USER
--- Login: admin@gmail.com | Password: admin321
+-- Login: admin@gmail.com | Password: admin
 -- ============================================================================
 INSERT INTO public.stores (id, name, code, address, phone, email, currency, timezone, invoice_prefix)
 VALUES (

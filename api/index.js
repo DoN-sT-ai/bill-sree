@@ -790,15 +790,48 @@ function generateSalt() {
   return crypto4.randomBytes(16).toString("hex");
 }
 function verifyPassword(password, hash, salt) {
+  if (!password || !hash) return false;
+  if (hash.startsWith("PBKDF2$") || hash.startsWith("pbkdf2_")) {
+    try {
+      const parts = hash.split("$");
+      let iterations = 1e5;
+      let hashSalt;
+      let targetHashStr = "";
+      let algo = "sha256";
+      if (parts.length === 4) {
+        iterations = parseInt(parts[1], 10);
+        hashSalt = Buffer.from(parts[2], "base64");
+        targetHashStr = parts[3];
+      } else if (parts.length === 5) {
+        const algoStr = parts[1].toLowerCase();
+        if (algoStr.includes("sha512")) algo = "sha512";
+        else if (algoStr.includes("sha1")) algo = "sha1";
+        else algo = "sha256";
+        iterations = parseInt(parts[2], 10);
+        hashSalt = Buffer.from(parts[3], "base64");
+        targetHashStr = parts[4];
+      }
+      if (hashSalt && targetHashStr) {
+        const targetBuf = Buffer.from(targetHashStr, "base64");
+        const derived = crypto4.pbkdf2Sync(password, hashSalt, iterations, targetBuf.length || 32, algo);
+        if (derived.length === targetBuf.length && crypto4.timingSafeEqual(derived, targetBuf)) {
+          return true;
+        }
+      }
+    } catch (_) {
+    }
+  }
   try {
     const testHash = hashPassword(password, salt);
     const bufA = Buffer.from(testHash, "hex");
     const bufB = Buffer.from(hash, "hex");
-    if (bufA.length !== bufB.length) return false;
-    return crypto4.timingSafeEqual(bufA, bufB);
+    if (bufA.length === bufB.length && crypto4.timingSafeEqual(bufA, bufB)) {
+      return true;
+    }
   } catch (_) {
     return false;
   }
+  return false;
 }
 var Database, db;
 var init_db = __esm({

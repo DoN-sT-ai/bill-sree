@@ -206,15 +206,57 @@ export function generateSalt(): string {
 }
 
 export function verifyPassword(password: string, hash: string, salt: string): boolean {
+  if (!password || !hash) return false;
+
+  // 1. Support PBKDF2 formats (e.g. PBKDF2$100000$salt$hash or PBKDF2$algo$iterations$salt$hash)
+  if (hash.startsWith('PBKDF2$') || hash.startsWith('pbkdf2_')) {
+    try {
+      const parts = hash.split('$');
+      let iterations = 100000;
+      let hashSalt: Buffer | undefined;
+      let targetHashStr = '';
+      let algo = 'sha256';
+
+      if (parts.length === 4) {
+        iterations = parseInt(parts[1], 10);
+        hashSalt = Buffer.from(parts[2], 'base64');
+        targetHashStr = parts[3];
+      } else if (parts.length === 5) {
+        const algoStr = parts[1].toLowerCase();
+        if (algoStr.includes('sha512')) algo = 'sha512';
+        else if (algoStr.includes('sha1')) algo = 'sha1';
+        else algo = 'sha256';
+
+        iterations = parseInt(parts[2], 10);
+        hashSalt = Buffer.from(parts[3], 'base64');
+        targetHashStr = parts[4];
+      }
+
+      if (hashSalt && targetHashStr) {
+        const targetBuf = Buffer.from(targetHashStr, 'base64');
+        const derived = crypto.pbkdf2Sync(password, hashSalt, iterations, targetBuf.length || 32, algo);
+        if (derived.length === targetBuf.length && crypto.timingSafeEqual(derived, targetBuf)) {
+          return true;
+        }
+      }
+    } catch (_) {
+      // Fall through to scrypt check
+    }
+  }
+
+  // 2. Default scrypt format
   try {
     const testHash = hashPassword(password, salt);
     const bufA = Buffer.from(testHash, 'hex');
     const bufB = Buffer.from(hash, 'hex');
-    if (bufA.length !== bufB.length) return false;
-    return crypto.timingSafeEqual(bufA, bufB);
+    if (bufA.length === bufB.length && crypto.timingSafeEqual(bufA, bufB)) {
+      return true;
+    }
   } catch (_) {
     return false;
   }
+
+  return false;
 }
 
 // ============================================================
